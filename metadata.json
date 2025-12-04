@@ -1,0 +1,7 @@
+{
+  "name": "Coleta Veicular Inteligente",
+  "description": "Aplicativo para coleta de dados de motoristas e veículos com preenchimento assistido por IA e geração automática de PDF.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

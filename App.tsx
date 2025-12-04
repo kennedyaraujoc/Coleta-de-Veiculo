@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { jsPDF } from 'jspdf';
-import { Car, User, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon } from 'lucide-react';
+import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon, LogOut } from 'lucide-react';
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
-import { VehicleData, AppStatus } from './types';
+import { VehicleData, User } from './types';
+import { extractVehicleInfoFromImage } from './services/ai';
+import { LoginScreen } from './components/LoginScreen';
+
 
 const vehicleModels = [
   "CARRETA (ATÉ 19.40m)",
@@ -24,6 +27,7 @@ const vehicleModels = [
 type RouteOption = 'MANAUS' | 'SANTARÉM';
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [vehicleList, setVehicleList] = useState<VehicleData[]>([]);
   const [isListExpanded, setIsListExpanded] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState<RouteOption>('MANAUS');
@@ -37,24 +41,28 @@ export default function App() {
     photoDataUrl: null
   });
 
-  const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
+  const [status, setStatus] = useState<'IDLE' | 'ANALYZING' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [statusMessage, setStatusMessage] = useState('');
   
   const licensePlateRegex = /^[A-Z]{3}-[0-9][A-Z0-9]{3}$/;
+
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setVehicleList([]);
+    resetForm();
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     
     if (name === 'licensePlate') {
-      // Apply Brazilian license plate mask (Mercosul/Standard)
-      const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      let maskedValue = cleaned;
-      if (cleaned.length > 3) {
-        maskedValue = `${cleaned.slice(0, 3)}-${cleaned.slice(3, 7)}`;
-      }
+      const maskedValue = applyPlateMask(value);
       setFormData(prev => ({ ...prev, [name]: maskedValue }));
     } else if (name === 'value') {
-      // Format currency as user types
       const onlyDigits = value.replace(/\D/g, '');
       if (!onlyDigits) {
         setFormData(prev => ({ ...prev, value: '' }));
@@ -74,8 +82,45 @@ export default function App() {
     }
   };
 
-  const handlePhotoSelect = (dataUrl: string | null) => {
+  const applyPlateMask = (plate: string) => {
+    const cleaned = plate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let maskedValue = cleaned;
+    if (cleaned.length > 3) {
+      maskedValue = `${cleaned.slice(0, 3)}-${cleaned.slice(3, 7)}`;
+    }
+    return maskedValue.substring(0, 8);
+  };
+
+  const handlePhotoSelect = async (dataUrl: string | null) => {
     setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
+
+    if (dataUrl) {
+      setStatus('ANALYZING');
+      setStatusMessage('Analisando imagem...');
+      try {
+        const base64Data = dataUrl.split(',')[1];
+        const info = await extractVehicleInfoFromImage(base64Data);
+
+        if (info && info.licensePlate) {
+          setFormData(prev => ({
+            ...prev,
+            licensePlate: applyPlateMask(info.licensePlate),
+            vehicleModel: info.vehicleModel || prev.vehicleModel,
+          }));
+          setStatusMessage('Dados extraídos com sucesso!');
+        } else {
+          setStatusMessage('Não foi possível extrair os dados. Preencha manualmente.');
+        }
+      } catch (error) {
+        console.error("AI extraction error:", error);
+        setStatusMessage('Erro na análise. Tente novamente ou preencha manualmente.');
+      } finally {
+        setTimeout(() => {
+          setStatus('IDLE');
+          setStatusMessage('');
+        }, 3000);
+      }
+    }
   };
 
   const resetForm = () => {
@@ -101,7 +146,7 @@ export default function App() {
     }
 
     setVehicleList(prev => [...prev, formData]);
-    setIsListExpanded(false); // Collapse list on new entry
+    setIsListExpanded(false);
     resetForm();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -116,7 +161,7 @@ export default function App() {
       return;
     }
 
-    setStatus(AppStatus.GENERATING_PDF);
+    setStatus('GENERATING');
     setStatusMessage('Gerando planilha PDF...');
 
     try {
@@ -133,9 +178,9 @@ export default function App() {
       doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 26);
 
       let yPos = 35;
-      const rowHeight = 18; // Increased height for photo
+      const rowHeight = 18;
       const pageHeight = doc.internal.pageSize.height;
-      const photoSize = 12; // 1:1 photo size
+      const photoSize = 12;
 
       const cols = {
         index:    { x: 10,  w: 8,  title: '#' },
@@ -150,7 +195,6 @@ export default function App() {
       const tableWidth = Object.values(cols).reduce((sum, col) => sum + col.w, 0);
       const tableEndX = cols.index.x + tableWidth;
 
-      // Draw Table Header
       doc.setFillColor(240, 240, 240);
       doc.rect(cols.index.x, yPos - 5, tableWidth, 7, 'F');
       
@@ -172,15 +216,11 @@ export default function App() {
         if (yPos + rowHeight > pageHeight - 20) {
           doc.addPage();
           yPos = 20;
-          doc.setFont("helvetica", "bold");
-          doc.text("Continuação...", 10, yPos - 5);
-          doc.line(10, tableEndX, yPos);
         }
 
-        const currentY = yPos + (rowHeight / 2); // Center align text vertically
-        const textY = currentY + 3; // Baseline adjustment for text
+        const currentY = yPos + (rowHeight / 2);
+        const textY = currentY + 3;
 
-        // Photo
         if (vehicle.photoDataUrl) {
           try {
             doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 1.5, currentY - (photoSize/2), photoSize, photoSize);
@@ -196,22 +236,11 @@ export default function App() {
         }
 
         doc.setFontSize(9);
-        // #
         doc.text((index + 1).toString(), cols.index.x + 2, textY);
-        
-        // Driver Name
         doc.text(vehicle.driverName.substring(0, 22), cols.driver.x + 2, textY, { maxWidth: cols.driver.w - 4 });
-
-        // License Plate
         doc.text(vehicle.licensePlate, cols.plate.x + 2, textY);
-
-        // Model
         doc.text(vehicle.vehicleModel.substring(0, 20), cols.model.x + 2, textY, { maxWidth: cols.model.w - 4 });
-
-        // Value (Formatted as Currency)
         doc.text(vehicle.value, cols.value.x + 2, textY);
-
-        // Signature Line
         doc.setLineWidth(0.1);
         doc.line(cols.sign.x + 2, currentY + 4, cols.sign.x + cols.sign.w - 2, currentY + 4);
 
@@ -220,19 +249,28 @@ export default function App() {
         doc.line(cols.index.x, yPos, tableEndX, yPos);
       }
       
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        doc.text(`Gerado por: ${currentUser?.name}`, 14, pageHeight - 10);
+        doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 35, pageHeight - 10);
+      }
+      
       doc.save(`Relatorio_Frota_${Date.now()}.pdf`);
 
-      setStatus(AppStatus.SUCCESS);
+      setStatus('SUCCESS');
       setStatusMessage('Planilha salva com sucesso!');
       
       setTimeout(() => {
-        setStatus(AppStatus.IDLE);
+        setStatus('IDLE');
         setVehicleList([]);
       }, 3000);
 
     } catch (error) {
       console.error("PDF Error", error);
-      setStatus(AppStatus.ERROR);
+      setStatus('ERROR');
       setStatusMessage('Erro ao gerar documento.');
     }
   };
@@ -256,7 +294,7 @@ export default function App() {
           </div>
           <button
               onClick={(e) => {
-                  if (!isLast || isListExpanded) { // Prevent click propagation only if it's the last item in collapsed view
+                  if (!isLast || isListExpanded) {
                       e.stopPropagation();
                   }
                   removeVehicle(vehicle.id)
@@ -268,14 +306,22 @@ export default function App() {
       </div>
   );
 
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Car className="text-blue-600" />
-            Coleta Veicular
-          </h1>
+          <div className="flex items-center gap-2">
+            <UserIcon className="text-blue-600" size={20}/>
+            <span className="font-semibold text-gray-800">{currentUser.name}</span>
+          </div>
+          <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-blue-600 flex items-center gap-1.5">
+            Sair
+            <LogOut size={16} />
+          </button>
         </div>
         <div className="max-w-md mx-auto px-4 pb-3 flex items-center justify-center gap-2 border-t border-gray-100">
           <button 
@@ -314,13 +360,20 @@ export default function App() {
             onPhotoSelect={handlePhotoSelect} 
           />
 
+          {status === 'ANALYZING' && (
+             <div className="flex items-center justify-center gap-2 text-sm text-blue-600 my-3 p-2 bg-blue-50 rounded-lg">
+                <Loader2 className="animate-spin" size={16} />
+                <span>{statusMessage}</span>
+            </div>
+          )}
+
           <Input
             label="Nome do Motorista"
             name="driverName"
             value={formData.driverName}
             onChange={handleInputChange}
             placeholder="Ex: João da Silva"
-            icon={<User size={18} />}
+            icon={<UserIcon size={18} />}
           />
 
           <div className="grid grid-cols-2 gap-4">
@@ -333,6 +386,7 @@ export default function App() {
               icon={<FileText size={18} />}
               className="uppercase"
               maxLength={8}
+              disabled={status === 'ANALYZING'}
             />
              <Input
               label="Valor (R$)"
@@ -354,6 +408,7 @@ export default function App() {
             placeholder="Selecione ou digite um modelo"
             icon={<Car size={18} />}
             list="vehicle-models-list"
+            disabled={status === 'ANALYZING'}
           />
           <datalist id="vehicle-models-list">
             {vehicleModels.map((model) => (
@@ -363,9 +418,9 @@ export default function App() {
 
           <button
             onClick={handleAddVehicle}
-            disabled={!isFormValid || status !== AppStatus.IDLE}
+            disabled={!isFormValid || status !== 'IDLE'}
             className={`w-full mt-4 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-semibold text-white transition-all
-              ${isFormValid && status === AppStatus.IDLE
+              ${isFormValid && status === 'IDLE'
                 ? 'bg-gray-900 hover:bg-black shadow-md' 
                 : 'bg-gray-300 cursor-not-allowed'}`}
           >
@@ -410,7 +465,7 @@ export default function App() {
           </div>
         )}
 
-        {status === AppStatus.SUCCESS && (
+        {status === 'SUCCESS' && (
           <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3 text-green-700 animate-fade-in">
             <CheckCircle size={24} />
             <div>
@@ -420,7 +475,7 @@ export default function App() {
           </div>
         )}
 
-         {status === AppStatus.ERROR && (
+         {status === 'ERROR' && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
              <p className="font-semibold">Erro</p>
              <p className="text-sm">Não foi possível salvar o documento.</p>
@@ -437,13 +492,13 @@ export default function App() {
             </div>
             <button
               onClick={generateAndSavePDF}
-              disabled={status !== AppStatus.IDLE && status !== AppStatus.SUCCESS}
+              disabled={status !== 'IDLE' && status !== 'SUCCESS'}
               className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl font-semibold text-white shadow-lg transition-all transform active:scale-95
-                ${status === AppStatus.IDLE || status === AppStatus.SUCCESS 
+                ${status === 'IDLE' || status === 'SUCCESS' 
                   ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' 
                   : 'bg-gray-400 cursor-not-allowed'}`}
             >
-              {status === AppStatus.GENERATING_PDF ? (
+              {status === 'GENERATING' ? (
                 <>
                   <Loader2 className="animate-spin" size={20} />
                   {statusMessage}

@@ -7,9 +7,11 @@ export interface VehicleData {
   photoDataUrl: string | null;
 }
 
-export enum AppStatus {
-  IDLE = 'IDLE',
-  GENERATING_PDF = 'GENERATING_PDF',
-  SUCCESS = 'SUCCESS',
-  ERROR = 'ERROR'
+export interface ExtractedVehicleInfo {
+  licensePlate: string;
+  vehicleModel: string;
+}
+
+export interface User {
+  name: string;
 }

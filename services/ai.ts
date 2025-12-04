@@ -1,12 +1,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ExtractedVehicleInfo } from "./types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-
 export async function extractVehicleInfoFromImage(
   base64ImageData: string
 ): Promise<ExtractedVehicleInfo | null> {
   try {
+    // Moved AI client initialization inside the function
+    // This prevents a crash on app load if the API_KEY is not set in the environment.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: {

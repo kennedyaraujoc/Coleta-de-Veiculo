@@ -1,11 +1,11 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { jsPDF } from 'jspdf';
-import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon, LogOut } from 'lucide-react';
+import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon, LogOut, Building2 } from 'lucide-react';
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
 import { VehicleData, User } from './types';
 import { LoginScreen } from './components/LoginScreen';
+import { extractVehicleInfoFromImage } from './services/ai.ts';
 
 
 const vehicleModels = [
@@ -25,6 +25,7 @@ const vehicleModels = [
 ];
 
 type RouteOption = 'MANAUS' | 'SANTARÉM';
+type AnalysisStatus = 'IDLE' | 'ANALYZING' | 'SUCCESS' | 'ERROR';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -32,19 +33,24 @@ export default function App() {
   const [isListExpanded, setIsListExpanded] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState<RouteOption>('MANAUS');
   
-  const [formData, setFormData] = useState<VehicleData>({
+  const initialFormData = {
     id: Date.now().toString(),
     driverName: '',
+    companyName: '',
     licensePlate: '',
     vehicleModel: '',
     value: '',
-    photoDataUrl: null
-  });
+    photoDataUrl: null,
+    paymentStatus: 'Pendente' as 'Pago' | 'Pendente',
+  };
 
-  const [status, setStatus] = useState<'IDLE' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [formData, setFormData] = useState<VehicleData>(initialFormData);
+
+  const [pdfStatus, setPdfStatus] = useState<'IDLE' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('IDLE');
   const [statusMessage, setStatusMessage] = useState('');
   
-  const licensePlateRegex = /^[A-Z]{3}-[0-9][A-Z0-9]{3}$/;
+  const licensePlateRegex = /^[A-Z]{3}-?[0-9][A-Z0-9]{3}$/;
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
@@ -91,29 +97,50 @@ export default function App() {
     return maskedValue.substring(0, 8);
   };
 
-  const handlePhotoSelect = (dataUrl: string | null) => {
+  const handlePhotoSelect = async (dataUrl: string | null) => {
     setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
+    if (dataUrl) {
+      setAnalysisStatus('ANALYZING');
+      setStatusMessage('Analisando imagem...');
+      try {
+        const info = await extractVehicleInfoFromImage(dataUrl);
+        setFormData(prev => ({
+          ...prev,
+          licensePlate: info.licensePlate ? applyPlateMask(info.licensePlate) : prev.licensePlate,
+          vehicleModel: info.vehicleModel || prev.vehicleModel,
+        }));
+        setAnalysisStatus('SUCCESS');
+        setStatusMessage('Informações extraídas!');
+      } catch (error) {
+        setAnalysisStatus('ERROR');
+        setStatusMessage((error as Error).message);
+      }
+    } else {
+        setAnalysisStatus('IDLE');
+    }
   };
 
+  useEffect(() => {
+    if (analysisStatus === 'SUCCESS' || analysisStatus === 'ERROR') {
+      const timer = setTimeout(() => setAnalysisStatus('IDLE'), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [analysisStatus]);
+
+
   const resetForm = () => {
-    setFormData({
-      id: Date.now().toString(),
-      driverName: '',
-      licensePlate: '',
-      vehicleModel: '',
-      value: '',
-      photoDataUrl: null
-    });
+    setFormData({ ...initialFormData, id: Date.now().toString() });
   };
 
   const handleAddVehicle = () => {
-    if (!formData.driverName || !formData.licensePlate || !formData.value) {
+    const finalPlate = formData.licensePlate.replace('-', '');
+    if (!formData.driverName || !finalPlate || !formData.value) {
       alert("Por favor, preencha todos os campos obrigatórios (Motorista, Placa e Valor).");
       return;
     }
 
     if (!licensePlateRegex.test(formData.licensePlate)) {
-        alert("Placa inválida. Use o formato brasileiro padrão com 8 caracteres (ex: ABC-1234 ou ABC-1B23).");
+        alert("Placa inválida. Use o formato brasileiro padrão (ex: ABC-1234 ou ABC1B23).");
         return;
     }
 
@@ -133,7 +160,7 @@ export default function App() {
       return;
     }
 
-    setStatus('GENERATING');
+    setPdfStatus('GENERATING');
     setStatusMessage('Gerando planilha PDF...');
 
     try {
@@ -156,25 +183,25 @@ export default function App() {
       doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 32);
 
       let yPos = 40;
-      const rowHeight = 18;
+      const rowHeight = 22;
       const pageHeight = doc.internal.pageSize.height;
-      const photoSize = 12;
+      const photoSize = 16;
 
       const cols = {
-        index:    { x: 10,  w: 8,  title: '#' },
-        photo:    { x: 18,  w: 15, title: 'Foto' },
-        driver:   { x: 33,  w: 45, title: 'Motorista' },
-        plate:    { x: 78,  w: 25, title: 'Placa' },
-        model:    { x: 103, w: 37, title: 'Modelo' },
-        value:    { x: 140, w: 25, title: 'Valor' },
-        sign:     { x: 165, w: 35, title: 'Assinatura' }
+        photo:    { x: 10,  w: 20, title: 'Foto' },
+        driver:   { x: 30,  w: 45, title: 'Motorista / Empresa' },
+        plate:    { x: 75,  w: 25, title: 'Placa' },
+        model:    { x: 100, w: 35, title: 'Modelo' },
+        value:    { x: 135, w: 20, title: 'Valor' },
+        status:   { x: 155, w: 20, title: 'Status' },
+        sign:     { x: 175, w: 25, title: 'Assinatura' }
       };
       
       const tableWidth = Object.values(cols).reduce((sum, col) => sum + col.w, 0);
-      const tableEndX = cols.index.x + tableWidth;
+      const tableEndX = cols.photo.x + tableWidth;
 
       doc.setFillColor(240, 240, 240);
-      doc.rect(cols.index.x, yPos - 5, tableWidth, 7, 'F');
+      doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
       
       doc.setFontSize(9);
       doc.setTextColor(0);
@@ -186,45 +213,57 @@ export default function App() {
       
       yPos += 2;
       doc.setLineWidth(0.5);
-      doc.line(cols.index.x, yPos, tableEndX, yPos);
+      doc.line(cols.photo.x, yPos, tableEndX, yPos);
       
       doc.setFont("helvetica", "normal");
       
-      for (const [index, vehicle] of vehicleList.entries()) {
+      for (const vehicle of vehicleList) {
         if (yPos + rowHeight > pageHeight - 20) {
           doc.addPage();
           yPos = 20;
         }
 
         const currentY = yPos + (rowHeight / 2);
-        const textY = currentY + 3;
 
         if (vehicle.photoDataUrl) {
           try {
-            doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 1.5, currentY - (photoSize/2), photoSize, photoSize);
-          } catch(e) {
-            console.error("Error adding image to PDF", e);
-            doc.text('Erro', cols.photo.x + 2, textY);
-          }
-        } else {
-          doc.setFontSize(7);
-          doc.setTextColor(150);
-          doc.text('S/ Foto', cols.photo.x + 2, textY);
-          doc.setTextColor(0);
+            doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 2, currentY - (photoSize/2), photoSize, photoSize);
+          } catch(e) { console.error("Error adding image to PDF", e); }
         }
 
         doc.setFontSize(9);
-        doc.text((index + 1).toString(), cols.index.x + 2, textY);
-        doc.text(vehicle.driverName.substring(0, 22), cols.driver.x + 2, textY, { maxWidth: cols.driver.w - 4 });
-        doc.text(vehicle.licensePlate, cols.plate.x + 2, textY);
-        doc.text(vehicle.vehicleModel.substring(0, 20), cols.model.x + 2, textY, { maxWidth: cols.model.w - 4 });
-        doc.text(vehicle.value, cols.value.x + 2, textY);
+        doc.text(vehicle.driverName, cols.driver.x + 2, currentY - 1, { maxWidth: cols.driver.w - 4 });
+        if (vehicle.companyName) {
+            doc.setFontSize(7);
+            doc.setTextColor(100);
+            doc.text(vehicle.companyName, cols.driver.x + 2, currentY + 4, { maxWidth: cols.driver.w - 4 });
+            doc.setTextColor(0);
+        }
+
+        doc.setFontSize(9);
+        doc.text(vehicle.licensePlate, cols.plate.x + 2, currentY + 2);
+        doc.text(vehicle.vehicleModel, cols.model.x + 2, currentY + 2, { maxWidth: cols.model.w - 4 });
+        doc.text(vehicle.value, cols.value.x + 2, currentY + 2);
+        
+        if (vehicle.paymentStatus === 'Pago') {
+            doc.setFillColor(34, 197, 94); // green
+            doc.setTextColor(34, 197, 94);
+            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F');
+            doc.text("Pago", cols.status.x + 7, currentY + 2);
+        } else {
+            doc.setFillColor(239, 68, 68); // red
+            doc.setTextColor(239, 68, 68);
+            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F');
+            doc.text("Pendente", cols.status.x + 7, currentY + 2);
+        }
+        doc.setTextColor(0);
+
         doc.setLineWidth(0.1);
         doc.line(cols.sign.x + 2, currentY + 4, cols.sign.x + cols.sign.w - 2, currentY + 4);
 
         yPos += rowHeight;
         doc.setDrawColor(200);
-        doc.line(cols.index.x, yPos, tableEndX, yPos);
+        doc.line(cols.photo.x, yPos, tableEndX, yPos);
       }
       
       const pageCount = doc.internal.getNumberOfPages();
@@ -238,22 +277,22 @@ export default function App() {
       
       doc.save(`Relatorio_Frota_${Date.now()}.pdf`);
 
-      setStatus('SUCCESS');
+      setPdfStatus('SUCCESS');
       setStatusMessage('Planilha salva com sucesso!');
       
       setTimeout(() => {
-        setStatus('IDLE');
+        setPdfStatus('IDLE');
         setVehicleList([]);
       }, 3000);
 
     } catch (error) {
       console.error("PDF Error", error);
-      setStatus('ERROR');
+      setPdfStatus('ERROR');
       setStatusMessage('Erro ao gerar documento.');
     }
   };
   
-  const isFormValid = formData.driverName && licensePlateRegex.test(formData.licensePlate) && formData.value;
+  const isFormValid = formData.driverName && licensePlateRegex.test(formData.licensePlate) && formData.value && analysisStatus !== 'ANALYZING';
 
   const renderVehicleCard = (vehicle: VehicleData, isLast: boolean) => (
       <div key={vehicle.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex items-start justify-between">
@@ -267,14 +306,12 @@ export default function App() {
               )}
               <div>
                   <p className="font-medium text-gray-900">{vehicle.driverName}</p>
-                  <p className="text-xs text-gray-500">{vehicle.licensePlate.toUpperCase()} • {vehicle.vehicleModel}</p>
+                  <p className="text-xs text-gray-500">{vehicle.licensePlate.toUpperCase()} • {vehicle.paymentStatus}</p>
               </div>
           </div>
           <button
               onClick={(e) => {
-                  if (!isLast || isListExpanded) {
-                      e.stopPropagation();
-                  }
+                  if (!isLast || isListExpanded) e.stopPropagation();
                   removeVehicle(vehicle.id)
               }}
               className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
@@ -287,6 +324,8 @@ export default function App() {
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
+  
+  const isAnalyzing = analysisStatus === 'ANALYZING';
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
@@ -309,9 +348,7 @@ export default function App() {
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
-          >
-              MANAUS
-          </button>
+          > MANAUS </button>
           <button
               onClick={() => setSelectedRoute('SANTARÉM')}
               className={`px-6 py-1.5 text-sm font-semibold rounded-full transition-all duration-200 ease-in-out transform active:scale-95 ${
@@ -319,14 +356,11 @@ export default function App() {
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
-          >
-              SANTARÉM
-          </button>
+          > SANTARÉM </button>
         </div>
       </header>
 
       <main className="max-w-md mx-auto px-4 py-6">
-        
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 relative">
           <div className="absolute top-0 right-0 p-4">
              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Novo Cadastro</span>
@@ -336,7 +370,14 @@ export default function App() {
             key={formData.id}
             photoDataUrl={formData.photoDataUrl} 
             onPhotoSelect={handlePhotoSelect} 
+            isAnalyzing={isAnalyzing}
           />
+
+          {analysisStatus !== 'IDLE' && (
+             <div className={`text-center text-sm p-2 mb-4 rounded-md ${analysisStatus === 'ANALYZING' ? 'bg-blue-50 text-blue-700' : analysisStatus === 'SUCCESS' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                {statusMessage}
+             </div>
+          )}
 
           <Input
             label="Nome do Motorista"
@@ -346,17 +387,26 @@ export default function App() {
             placeholder="Ex: João da Silva"
             icon={<UserIcon size={18} />}
           />
+          <Input
+            label="Nome da Empresa (Opcional)"
+            name="companyName"
+            value={formData.companyName}
+            onChange={handleInputChange}
+            placeholder="Ex: Transportes Brasil"
+            icon={<Building2 size={18} />}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             <Input
-              label="Placa (Padrão Brasileiro)"
+              label="Placa"
               name="licensePlate"
               value={formData.licensePlate}
               onChange={handleInputChange}
               placeholder="AAA-1B23"
-              icon={<FileText size={18} />}
+              icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
               className="uppercase"
               maxLength={8}
+              disabled={isAnalyzing}
             />
              <Input
               label="Valor (R$)"
@@ -376,108 +426,79 @@ export default function App() {
             value={formData.vehicleModel}
             onChange={handleInputChange}
             placeholder="Selecione ou digite um modelo"
-            icon={<Car size={18} />}
+            icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Car size={18} />}
             list="vehicle-models-list"
+            disabled={isAnalyzing}
           />
           <datalist id="vehicle-models-list">
-            {vehicleModels.map((model) => (
-              <option key={model} value={model} />
-            ))}
+            {vehicleModels.map((model) => (<option key={model} value={model} />))}
           </datalist>
+          
+          <div className="mt-4 mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Status do Pagamento</label>
+            <div className="flex gap-3">
+              <button 
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, paymentStatus: 'Pago' }))}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${formData.paymentStatus === 'Pago' ? 'bg-green-500 text-white shadow' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+              >Pago</button>
+              <button 
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, paymentStatus: 'Pendente' }))}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${formData.paymentStatus === 'Pendente' ? 'bg-red-500 text-white shadow' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+              >Pendente</button>
+            </div>
+          </div>
+
 
           <button
             onClick={handleAddVehicle}
-            disabled={!isFormValid || status !== 'IDLE'}
-            className={`w-full mt-4 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-semibold text-white transition-all
-              ${isFormValid && status === 'IDLE'
-                ? 'bg-gray-900 hover:bg-black shadow-md' 
-                : 'bg-gray-300 cursor-not-allowed'}`}
+            disabled={!isFormValid || pdfStatus !== 'IDLE'}
+            className={`w-full mt-6 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-semibold text-white transition-all
+              ${isFormValid && pdfStatus === 'IDLE' ? 'bg-gray-900 hover:bg-black shadow-md' : 'bg-gray-300 cursor-not-allowed'}`}
           >
             <Plus size={20} />
             Adicionar à Lista
           </button>
-          
         </div>
 
         {vehicleList.length > 0 && (
           <div className="mt-6">
-              <h2 className="text-sm font-semibold text-gray-500 mb-3 flex items-center gap-2">
-                  <List size={16} />
-                  Veículos Adicionados ({vehicleList.length})
-              </h2>
-              
+              <h2 className="text-sm font-semibold text-gray-500 mb-3 flex items-center gap-2"><List size={16} /> Veículos Adicionados ({vehicleList.length})</h2>
               {!isListExpanded ? (
-                  <div 
-                    onClick={() => vehicleList.length > 1 && setIsListExpanded(true)} 
-                    className={`${vehicleList.length > 1 ? 'cursor-pointer' : ''} space-y-2`}
-                  >
-                      {vehicleList.length > 1 && (
-                          <p className="text-xs font-semibold text-center text-blue-600">
-                              +{vehicleList.length - 1} registro(s) anterior(es)
-                          </p>
-                      )}
+                  <div onClick={() => vehicleList.length > 1 && setIsListExpanded(true)} className={`${vehicleList.length > 1 ? 'cursor-pointer' : ''} space-y-2`}>
+                      {vehicleList.length > 1 && (<p className="text-xs font-semibold text-center text-blue-600">+{vehicleList.length - 1} registro(s) anterior(es)</p>)}
                       {renderVehicleCard(vehicleList[vehicleList.length - 1], true)}
                   </div>
               ) : (
                   <div className="space-y-3">
                       {[...vehicleList].reverse().map((vehicle) => renderVehicleCard(vehicle, false))}
-                      {vehicleList.length > 1 && (
-                          <button
-                              onClick={() => setIsListExpanded(false)}
-                              className="w-full text-center text-sm text-blue-600 font-semibold py-2 rounded-lg hover:bg-blue-50 transition-colors mt-2"
-                          >
-                              Mostrar apenas o último
-                          </button>
-                      )}
+                      {vehicleList.length > 1 && (<button onClick={() => setIsListExpanded(false)} className="w-full text-center text-sm text-blue-600 font-semibold py-2 rounded-lg hover:bg-blue-50 transition-colors mt-2">Mostrar apenas o último</button>)}
                   </div>
               )}
           </div>
         )}
 
-        {status === 'SUCCESS' && (
+        {pdfStatus === 'SUCCESS' && (
           <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3 text-green-700 animate-fade-in">
-            <CheckCircle size={24} />
-            <div>
-              <p className="font-semibold">Documento Salvo!</p>
-              <p className="text-sm">A planilha com {vehicleList.length > 0 ? vehicleList.length : 'os'} registros foi gerada.</p>
-            </div>
+            <CheckCircle size={24} /><p className="font-semibold">Documento Salvo!</p>
           </div>
         )}
-
-         {status === 'ERROR' && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-             <p className="font-semibold">Erro</p>
-             <p className="text-sm">Não foi possível salvar o documento.</p>
-          </div>
+         {pdfStatus === 'ERROR' && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700"><p className="font-semibold">Erro ao salvar.</p></div>
         )}
-
       </main>
 
       {vehicleList.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
           <div className="max-w-md mx-auto">
-            <div className="flex items-center justify-between mb-3 text-sm text-gray-600">
-              <span>Total de registros: <strong>{vehicleList.length}</strong></span>
-            </div>
             <button
               onClick={generateAndSavePDF}
-              disabled={status !== 'IDLE' && status !== 'SUCCESS'}
+              disabled={pdfStatus !== 'IDLE' && pdfStatus !== 'SUCCESS'}
               className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl font-semibold text-white shadow-lg transition-all transform active:scale-95
-                ${status === 'IDLE' || status === 'SUCCESS' 
-                  ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' 
-                  : 'bg-gray-400 cursor-not-allowed'}`}
+                ${pdfStatus === 'IDLE' || pdfStatus === 'SUCCESS' ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' : 'bg-gray-400 cursor-not-allowed'}`}
             >
-              {status === 'GENERATING' ? (
-                <>
-                  <Loader2 className="animate-spin" size={20} />
-                  {statusMessage}
-                </>
-              ) : (
-                <>
-                  <UploadCloud size={20} />
-                  Gerar Planilha PDF
-                </>
-              )}
+              {pdfStatus === 'GENERATING' ? (<><Loader2 className="animate-spin" size={20} />{statusMessage}</>) : (<><UploadCloud size={20} />Gerar Planilha PDF</>)}
             </button>
           </div>
         </div>

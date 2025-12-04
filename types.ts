@@ -13,8 +13,3 @@ export enum AppStatus {
   SUCCESS = 'SUCCESS',
   ERROR = 'ERROR'
 }
-
-// FIX: Added ExtractedVehicleInfo interface to resolve the import error in services/ai.ts.
-export interface ExtractedVehicleInfo {
-  licensePlate?: string;
-}

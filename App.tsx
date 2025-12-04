@@ -4,8 +4,6 @@ import { Car, User, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plu
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
 import { VehicleData, AppStatus } from './types';
-// FIX: Import the AI service to analyze vehicle images.
-import { analyzeVehicleImage } from './services/ai';
 
 const vehicleModels = [
   "CARRETA (ATÉ 19.40m)",
@@ -41,8 +39,6 @@ export default function App() {
 
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
   const [statusMessage, setStatusMessage] = useState('');
-  // FIX: Add state to track image analysis from the AI service.
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   const licensePlateRegex = /^[A-Z]{3}-[0-9][A-Z0-9]{3}$/;
 
@@ -78,33 +74,8 @@ export default function App() {
     }
   };
 
-  // FIX: Implement image analysis to extract license plate using the AI service.
-  const handlePhotoSelect = async (dataUrl: string | null) => {
-    if (dataUrl) {
-      // Show photo and clear plate for analysis
-      setFormData(prev => ({ ...prev, photoDataUrl: dataUrl, licensePlate: '' }));
-      setIsAnalyzing(true);
-      try {
-        const result = await analyzeVehicleImage(dataUrl);
-        if (result?.licensePlate) {
-          const { licensePlate } = result;
-          // Apply Brazilian license plate mask
-          const cleaned = licensePlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-          let maskedValue = cleaned;
-          if (cleaned.length > 3) {
-            maskedValue = `${cleaned.slice(0, 3)}-${cleaned.slice(3, 7)}`;
-          }
-          setFormData(prev => ({ ...prev, licensePlate: maskedValue }));
-        }
-      } catch (error) {
-        console.error("Failed to analyze vehicle image:", error);
-      } finally {
-        setIsAnalyzing(false);
-      }
-    } else {
-      // Photo removed, just update the data URL to null
-      setFormData(prev => ({ ...prev, photoDataUrl: null }));
-    }
+  const handlePhotoSelect = (dataUrl: string | null) => {
+    setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
   };
 
   const resetForm = () => {
@@ -354,17 +325,15 @@ export default function App() {
           />
 
           <div className="grid grid-cols-2 gap-4">
-            {/* FIX: Add loading indicator and disable input during AI analysis. */}
             <Input
               label="Placa (Padrão Brasileiro)"
               name="licensePlate"
               value={formData.licensePlate}
               onChange={handleInputChange}
-              placeholder={isAnalyzing ? "Analisando..." : "AAA-1B23"}
-              icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
+              placeholder="AAA-1B23"
+              icon={<FileText size={18} />}
               className="uppercase"
               maxLength={8}
-              disabled={isAnalyzing}
             />
              <Input
               label="Valor (R$)"

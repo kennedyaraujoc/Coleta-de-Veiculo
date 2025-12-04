@@ -43,18 +43,30 @@ function getOrientation(file: File, callback: (orientation: number) => void) {
   reader.readAsArrayBuffer(file.slice(0, 64 * 1024));
 }
 
-// Função para rotacionar a imagem com base na orientação
-function resetOrientation(srcBase64: string, srcOrientation: number, callback: (dataUrl: string) => void) {
+// Função para rotacionar, redimensionar e comprimir a imagem
+function processImage(srcBase64: string, srcOrientation: number, callback: (dataUrl: string) => void) {
   const img = new Image();
   img.onload = () => {
+    // 1. Calcular dimensões alvo, mantendo a proporção
+    const MAX_DIMENSION = 400; // pixels
+    let width = img.width;
+    let height = img.height;
+    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        if (width > height) {
+            height = Math.round(height * MAX_DIMENSION / width);
+            width = MAX_DIMENSION;
+        } else {
+            width = Math.round(width * MAX_DIMENSION / height);
+            height = MAX_DIMENSION;
+        }
+    }
+
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    let width = img.width;
-    let height = img.height;
     
-    if (srcOrientation >= 5 && srcOrientation <= 8) {
+    // 2. Definir o tamanho do canvas com base nas dimensões finais (rotacionadas)
+    if (srcOrientation > 4 && srcOrientation < 9) {
       canvas.width = height;
       canvas.height = width;
     } else {
@@ -62,19 +74,33 @@ function resetOrientation(srcBase64: string, srcOrientation: number, callback: (
       canvas.height = height;
     }
 
+    // 3. Aplicar transformações de orientação
     switch (srcOrientation) {
-      case 2: ctx.transform(-1, 0, 0, 1, width, 0); break;
-      case 3: ctx.transform(-1, 0, 0, -1, width, height); break;
-      case 4: ctx.transform(1, 0, 0, -1, 0, height); break;
-      case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-      case 6: ctx.transform(0, 1, -1, 0, height, 0); break;
-      case 7: ctx.transform(0, -1, -1, 0, height, width); break;
-      case 8: ctx.transform(0, -1, 1, 0, 0, width); break;
+      case 2: ctx.translate(width, 0); ctx.scale(-1, 1); break;
+      case 3: ctx.translate(width, height); ctx.rotate(Math.PI); break;
+      case 4: ctx.translate(0, height); ctx.scale(1, -1); break;
+      case 5: ctx.rotate(0.5 * Math.PI); ctx.scale(1, -1); break;
+      case 6: ctx.rotate(0.5 * Math.PI); ctx.translate(0, -height); break;
+      case 7: ctx.rotate(0.5 * Math.PI); ctx.translate(width, -height); ctx.scale(-1, 1); break;
+      case 8: ctx.rotate(-0.5 * Math.PI); ctx.translate(-width, 0); break;
       default: break;
     }
 
-    ctx.drawImage(img, 0, 0);
-    callback(canvas.toDataURL());
+    // 4. Desenhar a imagem redimensionada no canvas
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // 5. Comprimir iterativamente para atingir o tamanho alvo de ~10KB
+    let quality = 0.9;
+    let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    const MAX_SIZE_BYTES = 10 * 1024; // 10 KB
+
+    // Loop para reduzir a qualidade até o tamanho do arquivo ser aceitável
+    while (dataUrl.length > MAX_SIZE_BYTES * 1.33 && quality > 0.1) {
+        quality -= 0.1;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+    }
+    
+    callback(dataUrl);
   };
   img.src = srcBase64;
 }
@@ -89,8 +115,8 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPh
       const reader = new FileReader();
       reader.onloadend = () => {
         getOrientation(file, (orientation) => {
-          resetOrientation(reader.result as string, orientation, (rotatedDataUrl) => {
-            onPhotoSelect(rotatedDataUrl);
+          processImage(reader.result as string, orientation, (processedDataUrl) => {
+            onPhotoSelect(processedDataUrl);
           });
         });
       };

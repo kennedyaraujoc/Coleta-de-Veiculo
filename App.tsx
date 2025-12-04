@@ -266,7 +266,9 @@ export default function App() {
         doc.line(cols.photo.x, yPos, tableEndX, yPos);
       }
       
-      const pageCount = doc.internal.getNumberOfPages();
+      // FIX: The `getNumberOfPages` method does not exist on `doc.internal`.
+      // The correct way to get the number of pages is via `doc.internal.pages.length`.
+      const pageCount = (doc as any).internal.pages.length;
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
         doc.setFontSize(8);

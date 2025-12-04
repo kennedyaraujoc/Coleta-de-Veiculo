@@ -7,11 +7,6 @@ export interface VehicleData {
   photoDataUrl: string | null;
 }
 
-export interface ExtractedVehicleInfo {
-  licensePlate: string;
-  vehicleModel: string;
-}
-
 export interface User {
   name: string;
 }

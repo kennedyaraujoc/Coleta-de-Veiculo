@@ -1,10 +1,10 @@
+
 import React, { useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon, LogOut } from 'lucide-react';
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
 import { VehicleData, User } from './types';
-import { extractVehicleInfoFromImage } from './services/ai';
 import { LoginScreen } from './components/LoginScreen';
 
 
@@ -41,7 +41,7 @@ export default function App() {
     photoDataUrl: null
   });
 
-  const [status, setStatus] = useState<'IDLE' | 'ANALYZING' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [status, setStatus] = useState<'IDLE' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [statusMessage, setStatusMessage] = useState('');
   
   const licensePlateRegex = /^[A-Z]{3}-[0-9][A-Z0-9]{3}$/;
@@ -91,36 +91,8 @@ export default function App() {
     return maskedValue.substring(0, 8);
   };
 
-  const handlePhotoSelect = async (dataUrl: string | null) => {
+  const handlePhotoSelect = (dataUrl: string | null) => {
     setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
-
-    if (dataUrl) {
-      setStatus('ANALYZING');
-      setStatusMessage('Analisando imagem...');
-      try {
-        const base64Data = dataUrl.split(',')[1];
-        const info = await extractVehicleInfoFromImage(base64Data);
-
-        if (info && info.licensePlate) {
-          setFormData(prev => ({
-            ...prev,
-            licensePlate: applyPlateMask(info.licensePlate),
-            vehicleModel: info.vehicleModel || prev.vehicleModel,
-          }));
-          setStatusMessage('Dados extraídos com sucesso!');
-        } else {
-          setStatusMessage('Não foi possível extrair os dados. Preencha manualmente.');
-        }
-      } catch (error) {
-        console.error("AI extraction error:", error);
-        setStatusMessage('Erro na análise. Tente novamente ou preencha manualmente.');
-      } finally {
-        setTimeout(() => {
-          setStatus('IDLE');
-          setStatusMessage('');
-        }, 3000);
-      }
-    }
   };
 
   const resetForm = () => {
@@ -173,11 +145,17 @@ export default function App() {
 
       doc.setFontSize(18);
       doc.text(pdfTitle, 14, 20);
+      
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(50);
+      doc.text(`Funcionário: ${currentUser?.name}`, 14, 26);
+
       doc.setFontSize(10);
       doc.setTextColor(100);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 26);
+      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 32);
 
-      let yPos = 35;
+      let yPos = 40;
       const rowHeight = 18;
       const pageHeight = doc.internal.pageSize.height;
       const photoSize = 12;
@@ -360,13 +338,6 @@ export default function App() {
             onPhotoSelect={handlePhotoSelect} 
           />
 
-          {status === 'ANALYZING' && (
-             <div className="flex items-center justify-center gap-2 text-sm text-blue-600 my-3 p-2 bg-blue-50 rounded-lg">
-                <Loader2 className="animate-spin" size={16} />
-                <span>{statusMessage}</span>
-            </div>
-          )}
-
           <Input
             label="Nome do Motorista"
             name="driverName"
@@ -386,7 +357,6 @@ export default function App() {
               icon={<FileText size={18} />}
               className="uppercase"
               maxLength={8}
-              disabled={status === 'ANALYZING'}
             />
              <Input
               label="Valor (R$)"
@@ -408,7 +378,6 @@ export default function App() {
             placeholder="Selecione ou digite um modelo"
             icon={<Car size={18} />}
             list="vehicle-models-list"
-            disabled={status === 'ANALYZING'}
           />
           <datalist id="vehicle-models-list">
             {vehicleModels.map((model) => (

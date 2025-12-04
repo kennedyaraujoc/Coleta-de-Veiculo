@@ -110,7 +110,7 @@ export default function App() {
     setVehicleList(prev => prev.filter(v => v.id !== id));
   };
 
-  const generateAndSavePDF = async () => {
+  const generateAndSavePDF = () => {
     if (vehicleList.length === 0) {
       alert("Adicione pelo menos um veículo à lista.");
       return;
@@ -219,8 +219,7 @@ export default function App() {
         doc.setDrawColor(200);
         doc.line(cols.index.x, yPos, tableEndX, yPos);
       }
-
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       doc.save(`Relatorio_Frota_${Date.now()}.pdf`);
 
       setStatus(AppStatus.SUCCESS);

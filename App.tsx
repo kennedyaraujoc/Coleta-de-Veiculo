@@ -49,8 +49,6 @@ export default function App() {
   const [pdfStatus, setPdfStatus] = useState<'IDLE' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('IDLE');
   const [statusMessage, setStatusMessage] = useState('');
-  
-  const licensePlateRegex = /^[A-Z]{3}-?[0-9][A-Z0-9]{3}$/;
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
@@ -61,13 +59,19 @@ export default function App() {
     setVehicleList([]);
     resetForm();
   };
+  
+  const formatPlateInput = (plate: string) => {
+    // Apenas converte para maiúsculas e remove caracteres inválidos, permitindo hífens.
+    // O usuário tem a flexibilidade de formatar como desejar.
+    return plate.toUpperCase().replace(/[^A-Z0-9-]/g, '').substring(0, 8);
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     
     if (name === 'licensePlate') {
-      const maskedValue = applyPlateMask(value);
-      setFormData(prev => ({ ...prev, [name]: maskedValue }));
+      const formattedValue = formatPlateInput(value);
+      setFormData(prev => ({ ...prev, [name]: formattedValue }));
     } else if (name === 'value') {
       const onlyDigits = value.replace(/\D/g, '');
       if (!onlyDigits) {
@@ -88,15 +92,6 @@ export default function App() {
     }
   };
 
-  const applyPlateMask = (plate: string) => {
-    const cleaned = plate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    let maskedValue = cleaned;
-    if (cleaned.length > 3) {
-      maskedValue = `${cleaned.slice(0, 3)}-${cleaned.slice(3, 7)}`;
-    }
-    return maskedValue.substring(0, 8);
-  };
-
   const handlePhotoSelect = async (dataUrl: string | null) => {
     setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
     if (dataUrl) {
@@ -106,7 +101,7 @@ export default function App() {
         const info = await extractVehicleInfoFromImage(dataUrl);
         setFormData(prev => ({
           ...prev,
-          licensePlate: info.licensePlate ? applyPlateMask(info.licensePlate) : prev.licensePlate,
+          licensePlate: info.licensePlate ? formatPlateInput(info.licensePlate) : prev.licensePlate,
           vehicleModel: info.vehicleModel || prev.vehicleModel,
         }));
         setAnalysisStatus('SUCCESS');
@@ -133,15 +128,16 @@ export default function App() {
   };
 
   const handleAddVehicle = () => {
-    const finalPlate = formData.licensePlate.replace('-', '');
-    if (!formData.driverName || !finalPlate || !formData.value) {
+    const cleanedPlate = formData.licensePlate.replace(/[^A-Z0-9]/g, '');
+
+    if (!formData.driverName || !cleanedPlate || !formData.value) {
       alert("Por favor, preencha todos os campos obrigatórios (Motorista, Placa e Valor).");
       return;
     }
-
-    if (!licensePlateRegex.test(formData.licensePlate)) {
-        alert("Placa inválida. Use o formato brasileiro padrão (ex: ABC-1234 ou ABC1B23).");
-        return;
+    
+    if (cleanedPlate.length < 6 || cleanedPlate.length > 7) {
+      alert("Placa inválida. A placa deve conter entre 6 e 7 letras e números.");
+      return;
     }
 
     setVehicleList(prev => [...prev, formData]);
@@ -266,8 +262,6 @@ export default function App() {
         doc.line(cols.photo.x, yPos, tableEndX, yPos);
       }
       
-      // FIX: The `getNumberOfPages` method does not exist on `doc.internal`.
-      // The correct way to get the number of pages is via `doc.internal.pages.length`.
       const pageCount = (doc as any).internal.pages.length;
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
@@ -294,7 +288,8 @@ export default function App() {
     }
   };
   
-  const isFormValid = formData.driverName && licensePlateRegex.test(formData.licensePlate) && formData.value && analysisStatus !== 'ANALYZING';
+  const cleanedPlateLength = formData.licensePlate.replace(/[^A-Z0-9]/g, '').length;
+  const isFormValid = formData.driverName && cleanedPlateLength >= 6 && cleanedPlateLength <= 7 && formData.value && analysisStatus !== 'ANALYZING';
 
   const renderVehicleCard = (vehicle: VehicleData, isLast: boolean) => (
       <div key={vehicle.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex items-start justify-between">
@@ -404,7 +399,7 @@ export default function App() {
               name="licensePlate"
               value={formData.licensePlate}
               onChange={handleInputChange}
-              placeholder="AAA-1B23"
+              placeholder="ABC-1234"
               icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
               className="uppercase"
               maxLength={8}

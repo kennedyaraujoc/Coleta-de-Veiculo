@@ -25,7 +25,7 @@ export async function extractVehicleInfoFromImage(
       model: 'gemini-2.5-flash',
       contents: {
         parts: [
-          { text: "Analise a imagem deste veículo e extraia a placa (licensePlate) e o modelo do veículo (vehicleModel). A placa deve estar no formato brasileiro. Se não conseguir identificar um dos campos, deixe-o em branco." },
+          { text: "Analise a imagem para extrair a placa (licensePlate) e o modelo do veículo (vehicleModel). A placa deve ser extraída independentemente do formato (padrão Mercosul 'ABC1D23', padrão antigo 'ABC-1234', ou de motocicletas com 2 letras 'AB-1234', etc.). Retorne a placa exatamente como ela aparece na imagem. O modelo deve ser o mais específico possível (ex: 'Motocicleta Honda Biz', 'Caminhão Scania R450'). Se um campo não for identificado, retorne um valor vazio para ele." },
           imagePart
         ]
       },
@@ -34,7 +34,7 @@ export async function extractVehicleInfoFromImage(
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            licensePlate: { type: Type.STRING, description: 'A placa do veículo no formato ABC-1234 ou ABC-1B23.' },
+            licensePlate: { type: Type.STRING, description: 'A placa do veículo, ex: ABC-1234, ABC1D23, AB-1234.' },
             vehicleModel: { type: Type.STRING, description: 'O modelo do veículo, por exemplo: "Honda Civic" ou "CARRETA".' },
           },
         },

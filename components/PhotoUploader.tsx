@@ -74,19 +74,19 @@ function processImage(srcBase64: string, srcOrientation: number, callback: (data
       canvas.height = height;
     }
 
-    // 3. Aplicar transformações de orientação
+    // 3. Aplicar transformações de orientação usando matriz de transformação para maior robustez
     switch (srcOrientation) {
-      case 2: ctx.translate(width, 0); ctx.scale(-1, 1); break;
-      case 3: ctx.translate(width, height); ctx.rotate(Math.PI); break;
-      case 4: ctx.translate(0, height); ctx.scale(1, -1); break;
-      case 5: ctx.rotate(0.5 * Math.PI); ctx.scale(1, -1); break;
-      case 6: ctx.rotate(0.5 * Math.PI); ctx.translate(0, -height); break;
-      case 7: ctx.rotate(0.5 * Math.PI); ctx.translate(width, -height); ctx.scale(-1, 1); break;
-      case 8: ctx.rotate(-0.5 * Math.PI); ctx.translate(-width, 0); break;
+      case 2: ctx.transform(-1, 0, 0, 1, width, 0); break;
+      case 3: ctx.transform(-1, 0, 0, -1, width, height); break;
+      case 4: ctx.transform(1, 0, 0, -1, 0, height); break;
+      case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+      case 6: ctx.transform(0, 1, -1, 0, height, 0); break;
+      case 7: ctx.transform(0, -1, -1, 0, height, width); break;
+      case 8: ctx.transform(0, -1, 1, 0, 0, width); break;
       default: break;
     }
 
-    // 4. Desenhar a imagem redimensionada no canvas
+    // 4. Desenhar a imagem redimensionada. A matriz cuida da posição e rotação corretas.
     ctx.drawImage(img, 0, 0, width, height);
 
     // 5. Comprimir iterativamente para atingir o tamanho alvo de ~10KB

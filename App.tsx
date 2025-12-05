@@ -44,6 +44,42 @@ const dataURLtoBlob = (dataurl: string) => {
   return new Blob([u8arr], {type:mime});
 }
 
+// --- CONFIGURAÇÃO DE ECONOMIA MÁXIMA ---
+const fixImageRotation = (dataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = dataUrl;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // MUDEI AQUI: De 1200 para 500 (Isso reduz drasticamente o tamanho)
+      const maxDim = 500; 
+      
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+         if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+      } else {
+         if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      
+      if (ctx) {
+         ctx.drawImage(img, 0, 0, width, height);
+         // MUDEI AQUI: Qualidade 0.5 (50%). Fica bem leve.
+         resolve(canvas.toDataURL('image/jpeg', 0.5)); 
+      } else {
+         resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+  });
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [vehicleList, setVehicleList] = useState<VehicleData[]>([]);
@@ -51,7 +87,6 @@ export default function App() {
   const [loadingData, setLoadingData] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   
-  // NOVOS ESTADOS PARA CONTROLAR SE A LISTA TÁ ABERTA OU FECHADA
   const [showPendentes, setShowPendentes] = useState(true);
   const [showPagos, setShowPagos] = useState(true);
   
@@ -120,16 +155,23 @@ export default function App() {
   };
 
   const handlePhotoSelect = async (dataUrl: string | null) => {
-    setFormData(prev => ({ ...prev, photoDataUrl: dataUrl }));
     if (dataUrl) {
+      // Aqui a mágica acontece: Reduz e vira a foto antes de salvar
+      const correctedImage = await fixImageRotation(dataUrl);
+      setFormData(prev => ({ ...prev, photoDataUrl: correctedImage }));
+      
       setAnalysisStatus('ANALYZING');
       setStatusMessage('Analisando imagem...');
       try {
-        const info = await extractVehicleInfoFromImage(dataUrl);
+        // Envia a imagem leve para a IA ler a placa
+        const info = await extractVehicleInfoFromImage(correctedImage);
         setFormData(prev => ({ ...prev, licensePlate: info.licensePlate || prev.licensePlate, vehicleModel: info.vehicleModel || prev.vehicleModel }));
         setAnalysisStatus('SUCCESS'); setStatusMessage('Informações extraídas!');
       } catch (error) { setAnalysisStatus('ERROR'); setStatusMessage('Erro na leitura.'); }
-    } else setAnalysisStatus('IDLE');
+    } else { 
+      setFormData(prev => ({ ...prev, photoDataUrl: null }));
+      setAnalysisStatus('IDLE'); 
+    }
   };
 
   const resetForm = () => { setFormData({ ...initialFormData }); setEditingId(null); };
@@ -143,6 +185,7 @@ export default function App() {
       if (formData.photoDataUrl && formData.photoDataUrl.startsWith('data:image')) {
         const fileBlob = dataURLtoBlob(formData.photoDataUrl);
         const fileName = `${currentUser.id}/${Date.now()}.jpg`;
+        // Envia a imagem já reduzida para a nuvem
         const { error: uploadError } = await supabase.storage.from('fotos').upload(fileName, fileBlob);
         if (!uploadError) {
           const { data: { publicUrl } } = supabase.storage.from('fotos').getPublicUrl(fileName);
@@ -305,7 +348,6 @@ export default function App() {
       </div>
 
       <main className="max-w-md mx-auto p-4 space-y-6">
-        {/* FORMULÁRIO */}
         <div className={`bg-white rounded-xl shadow-sm p-6 border transition-all ${editingId ? 'border-yellow-400 ring-2 ring-yellow-100' : 'border-gray-100'} relative`}>
           <div className="absolute top-3 right-3">
               {editingId ? <span className="text-[10px] font-black text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full uppercase tracking-wider">Editando</span> 
@@ -335,7 +377,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* LISTAS SEPARADAS E COLAPSÁVEIS */}
         {vehicleList.length > 0 && (
           <div className="space-y-6">
               <div className="flex justify-end">
@@ -344,45 +385,23 @@ export default function App() {
                 </button>
               </div>
 
-              {/* GRUPO PENDENTES */}
               {pendentes.length > 0 && (
                   <div className="bg-red-50/50 rounded-xl border border-red-100 overflow-hidden">
-                      <button 
-                        onClick={() => setShowPendentes(!showPendentes)}
-                        className="w-full flex items-center justify-between p-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs uppercase tracking-wider transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                           <AlertCircle size={14}/> Pendentes ({pendentes.length})
-                        </div>
+                      <button onClick={() => setShowPendentes(!showPendentes)} className="w-full flex items-center justify-between p-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs uppercase tracking-wider transition-colors">
+                        <div className="flex items-center gap-2"><AlertCircle size={14}/> Pendentes ({pendentes.length})</div>
                         {showPendentes ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
                       </button>
-                      
-                      {showPendentes && (
-                        <div className="p-3 space-y-3">
-                            {pendentes.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}
-                        </div>
-                      )}
+                      {showPendentes && (<div className="p-3 space-y-3">{pendentes.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}</div>)}
                   </div>
               )}
 
-              {/* GRUPO PAGOS */}
               {pagos.length > 0 && (
                   <div className="bg-green-50/50 rounded-xl border border-green-100 overflow-hidden">
-                      <button 
-                        onClick={() => setShowPagos(!showPagos)}
-                        className="w-full flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 text-green-700 font-bold text-xs uppercase tracking-wider transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                           <CheckCircle size={14}/> Pagos ({pagos.length})
-                        </div>
+                      <button onClick={() => setShowPagos(!showPagos)} className="w-full flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 text-green-700 font-bold text-xs uppercase tracking-wider transition-colors">
+                        <div className="flex items-center gap-2"><CheckCircle size={14}/> Pagos ({pagos.length})</div>
                         {showPagos ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
                       </button>
-                      
-                      {showPagos && (
-                        <div className="p-3 space-y-3">
-                            {pagos.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}
-                        </div>
-                      )}
+                      {showPagos && (<div className="p-3 space-y-3">{pagos.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}</div>)}
                   </div>
               )}
           </div>

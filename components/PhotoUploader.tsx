@@ -1,110 +1,11 @@
 import React, { useRef } from 'react';
-import { Camera, Image as ImageIcon, X } from 'lucide-react';
+import { Camera, X } from 'lucide-react';
 
 interface PhotoUploaderProps {
   photoDataUrl: string | null;
   onPhotoSelect: (dataUrl: string | null) => void;
   isAnalyzing: boolean;
 }
-
-// Função para ler a orientação EXIF de uma imagem
-function getOrientation(file: File, callback: (orientation: number) => void) {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const view = new DataView(e.target?.result as ArrayBuffer);
-    if (view.getUint16(0, false) !== 0xFFD8) {
-      return callback(-2); // Not a JPEG
-    }
-    const length = view.byteLength;
-    let offset = 2;
-    while (offset < length) {
-      if (view.getUint16(offset + 2, false) <= 8) return callback(-1); // Invalid EXIF
-      const marker = view.getUint16(offset, false);
-      offset += 2;
-      if (marker === 0xFFE1) {
-        if (view.getUint32(offset += 2, false) !== 0x45786966) return callback(-1);
-        const little = view.getUint16(offset += 6, false) === 0x4949;
-        offset += view.getUint32(offset + 4, little);
-        const tags = view.getUint16(offset, little);
-        offset += 2;
-        for (let i = 0; i < tags; i++) {
-          if (view.getUint16(offset + (i * 12), little) === 0x0112) {
-            return callback(view.getUint16(offset + (i * 12) + 8, little));
-          }
-        }
-      } else if ((marker & 0xFF00) !== 0xFF00) {
-        break;
-      } else {
-        offset += view.getUint16(offset, false);
-      }
-    }
-    return callback(-1); // Not found
-  };
-  reader.readAsArrayBuffer(file.slice(0, 64 * 1024));
-}
-
-// Função para rotacionar, redimensionar e comprimir a imagem
-function processImage(srcBase64: string, srcOrientation: number, callback: (dataUrl: string) => void) {
-  const img = new Image();
-  img.onload = () => {
-    // 1. Calcular dimensões alvo, mantendo a proporção
-    const MAX_DIMENSION = 400; // pixels
-    let width = img.width;
-    let height = img.height;
-    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-        if (width > height) {
-            height = Math.round(height * MAX_DIMENSION / width);
-            width = MAX_DIMENSION;
-        } else {
-            width = Math.round(width * MAX_DIMENSION / height);
-            height = MAX_DIMENSION;
-        }
-    }
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    // 2. Definir o tamanho do canvas com base nas dimensões finais (rotacionadas)
-    if (srcOrientation > 4 && srcOrientation < 9) {
-      canvas.width = height;
-      canvas.height = width;
-    } else {
-      canvas.width = width;
-      canvas.height = height;
-    }
-
-    // 3. Aplicar transformações de orientação usando matriz de transformação para maior robustez
-    switch (srcOrientation) {
-      case 2: ctx.transform(-1, 0, 0, 1, width, 0); break;
-      case 3: ctx.transform(-1, 0, 0, -1, width, height); break;
-      case 4: ctx.transform(1, 0, 0, -1, 0, height); break;
-      case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-      case 6: ctx.transform(0, 1, -1, 0, height, 0); break;
-      case 7: ctx.transform(0, -1, -1, 0, height, width); break;
-      case 8: ctx.transform(0, -1, 1, 0, 0, width); break;
-      default: break;
-    }
-
-    // 4. Desenhar a imagem redimensionada. A matriz cuida da posição e rotação corretas.
-    ctx.drawImage(img, 0, 0, width, height);
-
-    // 5. Comprimir iterativamente para atingir o tamanho alvo de ~10KB
-    let quality = 0.9;
-    let dataUrl = canvas.toDataURL('image/jpeg', quality);
-    const MAX_SIZE_BYTES = 10 * 1024; // 10 KB
-
-    // Loop para reduzir a qualidade até o tamanho do arquivo ser aceitável
-    while (dataUrl.length > MAX_SIZE_BYTES * 1.33 && quality > 0.1) {
-        quality -= 0.1;
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
-    }
-    
-    callback(dataUrl);
-  };
-  img.src = srcBase64;
-}
-
 
 export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPhotoSelect, isAnalyzing }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,11 +15,9 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPh
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        getOrientation(file, (orientation) => {
-          processImage(reader.result as string, orientation, (processedDataUrl) => {
-            onPhotoSelect(processedDataUrl);
-          });
-        });
+        // Agora nós enviamos a foto "crua" para o App.tsx.
+        // O App.tsx é quem vai usar o Canvas para corrigir a rotação e tamanho.
+        onPhotoSelect(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
@@ -134,7 +33,7 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPh
   return (
     <div className="mb-6">
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        Foto do Veículo (Opcional)
+        Foto do Veículo
       </label>
       
       {!photoDataUrl ? (
@@ -143,8 +42,7 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPh
           className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer flex flex-col items-center justify-center h-48"
         >
           <Camera className="w-10 h-10 text-gray-400 mb-2" />
-          <p className="text-sm text-gray-500">Toque para tirar ou carregar foto</p>
-          <span className="text-xs text-blue-500 mt-1">IA irá preencher Placa e Modelo</span>
+          <p className="text-sm text-gray-500">Toque para tirar foto</p>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -160,7 +58,7 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({ photoDataUrl, onPh
           <button
             onClick={handleRemove}
             disabled={isAnalyzing}
-            className="absolute top-2 right-2 bg-white/90 p-1.5 rounded-full shadow-md text-gray-700 hover:text-red-600 transition-colors disabled:opacity-50"
+            className="absolute top-2 right-2 bg-white/90 p-1.5 rounded-full shadow-md text-gray-700 hover:text-red-600 transition-colors"
           >
             <X size={20} />
           </button>

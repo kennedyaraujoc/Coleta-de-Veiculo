@@ -1,59 +1,116 @@
 import React, { useState } from 'react';
-import { Car, LogIn } from 'lucide-react';
-import { User } from '../types';
+import { User, Lock, Mail, Loader2 } from 'lucide-react';
+import { supabase } from '../services/supabase';
 
 interface LoginScreenProps {
-  onLogin: (user: User) => void;
+  onLogin: (user: any) => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
-  const [name, setName] = useState('');
+export function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim()) {
-      onLogin({ name: name.trim() });
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      if (isSignUp) {
+        // Criar conta
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+        alert('Conta criada! Verifique seu e-mail ou tente entrar.');
+        setIsSignUp(false);
+      } else {
+        // Entrar
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+        if (data.user) {
+          onLogin({ 
+            id: data.user.id, 
+            name: email.split('@')[0], // Usa o começo do email como nome
+            email: email 
+          }); 
+        }
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message === 'Invalid login credentials' ? 'Senha ou email incorretos.' : error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center items-center p-4">
-      <div className="max-w-sm w-full">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-sm border border-gray-100">
         <div className="text-center mb-8">
-            <div className="inline-block bg-blue-100 p-4 rounded-full">
-               <Car className="text-blue-600 w-10 h-10" />
-            </div>
-          <h1 className="text-3xl font-bold text-gray-800 mt-4">Coleta Veicular</h1>
-          <p className="text-gray-500 mt-1">Identifique-se para continuar</p>
+          <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <User className="text-blue-600" size={32} />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800">Coleta Veicular</h2>
+          <p className="text-gray-500 text-sm mt-1">{isSignUp ? 'Crie sua conta' : 'Identifique-se para continuar'}</p>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6 sm:p-8 border border-gray-200">
-          <form onSubmit={handleLogin}>
-            <div className="mb-5">
-              <label htmlFor="employeeName" className="block text-sm font-medium text-gray-700 mb-1">
-                Nome do Funcionário
-              </label>
+        <form onSubmit={handleAuth} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
               <input
-                id="employeeName"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Digite seu nome"
-                className="block w-full rounded-md border-gray-300 py-3 px-4 focus:ring-blue-500 focus:border-blue-500 sm:text-sm border shadow-sm"
+                type="email"
                 required
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                placeholder="seu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <button
-              type="submit"
-              disabled={!name.trim()}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold rounded-lg py-3 px-4 hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
-            >
-              <LogIn size={18} />
-              Entrar
-            </button>
-          </form>
-        </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
+              <input
+                type="password"
+                required
+                minLength={6}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                placeholder="******"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {errorMsg && <p className="text-red-500 text-sm text-center">{errorMsg}</p>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+          >
+            {loading ? <Loader2 className="animate-spin" size={20} /> : (isSignUp ? 'Cadastrar' : 'Entrar')}
+          </button>
+        </form>
+
+        <button
+          onClick={() => setIsSignUp(!isSignUp)}
+          className="w-full mt-6 text-sm text-blue-600 font-medium hover:underline text-center"
+        >
+          {isSignUp ? 'Já tenho uma conta' : 'Não tenho conta? Cadastrar'}
+        </button>
       </div>
     </div>
   );
-};
+}

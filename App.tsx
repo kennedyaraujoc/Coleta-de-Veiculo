@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { jsPDF } from 'jspdf';
-import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, CheckCircle, Loader2, Plus, Trash2, List, Camera as CameraIcon, LogOut, Building2 } from 'lucide-react';
+import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, Loader2, List, Camera as CameraIcon, LogOut, Building2, Edit, Trash2 } from 'lucide-react';
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
-import { VehicleData, User } from './types';
 import { LoginScreen } from './components/LoginScreen';
 import { extractVehicleInfoFromImage } from './services/ai.ts';
+import { supabase } from './services/supabase';
 
+interface VehicleData {
+  id: string;
+  driverName: string;
+  companyName: string;
+  licensePlate: string;
+  vehicleModel: string;
+  value: string;
+  photoDataUrl: string | null;
+  paymentStatus: 'Pago' | 'Pendente';
+  foto_url?: string;
+}
 
 const vehicleModels = [
   "CARRETA (ATÉ 19.40m)",
@@ -24,72 +35,84 @@ const vehicleModels = [
   "CAVALO MECÂNICO",
 ];
 
-type RouteOption = 'MANAUS' | 'SANTARÉM';
-type AnalysisStatus = 'IDLE' | 'ANALYZING' | 'SUCCESS' | 'ERROR';
+const dataURLtoBlob = (dataurl: string) => {
+  const arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)?.[1];
+  const bstr = atob(arr[1]); 
+  let n = bstr.length; 
+  const u8arr = new Uint8Array(n);
+  while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+  return new Blob([u8arr], {type:mime});
+}
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [vehicleList, setVehicleList] = useState<VehicleData[]>([]);
-  const [isListExpanded, setIsListExpanded] = useState(false);
-  const [selectedRoute, setSelectedRoute] = useState<RouteOption>('MANAUS');
+  const [selectedRoute, setSelectedRoute] = useState<'MANAUS' | 'SANTARÉM'>('MANAUS');
+  const [loadingData, setLoadingData] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   
-  const initialFormData = {
-    id: Date.now().toString(),
-    driverName: '',
-    companyName: '',
-    licensePlate: '',
-    vehicleModel: '',
-    value: '',
-    photoDataUrl: null,
-    paymentStatus: 'Pendente' as 'Pago' | 'Pendente',
+  const initialFormData: VehicleData = {
+    id: '', driverName: '', companyName: '', licensePlate: '', vehicleModel: '', value: '', photoDataUrl: null, paymentStatus: 'Pendente',
   };
 
   const [formData, setFormData] = useState<VehicleData>(initialFormData);
-
   const [pdfStatus, setPdfStatus] = useState<'IDLE' | 'GENERATING' | 'SUCCESS' | 'ERROR'>('IDLE');
-  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('IDLE');
+  const [analysisStatus, setAnalysisStatus] = useState<'IDLE' | 'ANALYZING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [statusMessage, setStatusMessage] = useState('');
 
-  const handleLogin = (user: User) => {
-    setCurrentUser(user);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setCurrentUser({ name: session.user.email?.split('@')[0], email: session.user.email, id: session.user.id });
+        carregarDadosDoBanco();
+      }
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setCurrentUser({ name: session.user.email?.split('@')[0], email: session.user.email, id: session.user.id });
+        carregarDadosDoBanco();
+      } else {
+        setCurrentUser(null);
+        setVehicleList([]);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const carregarDadosDoBanco = async () => {
+    setLoadingData(true);
+    const { data } = await supabase.from('coletas').select('*').order('created_at', { ascending: false });
+    if (data) {
+      setVehicleList(data.map((item: any) => ({
+        id: item.id,
+        driverName: item.motorista || '',
+        companyName: item.empresa || '',
+        licensePlate: item.placa || '',
+        vehicleModel: item.modelo || '',
+        value: item.valor || '',
+        paymentStatus: item.status === 'Pago' ? 'Pago' : 'Pendente',
+        photoDataUrl: item.foto_url || null, 
+        foto_url: item.foto_url
+      })));
+    }
+    setLoadingData(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setCurrentUser(null);
     setVehicleList([]);
     resetForm();
   };
   
-  const formatPlateInput = (plate: string) => {
-    // Apenas converte para maiúsculas e remove caracteres inválidos, permitindo hífens.
-    // O usuário tem a flexibilidade de formatar como desejar.
-    return plate.toUpperCase().replace(/[^A-Z0-9-]/g, '').substring(0, 8);
-  };
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    
-    if (name === 'licensePlate') {
-      const formattedValue = formatPlateInput(value);
-      setFormData(prev => ({ ...prev, [name]: formattedValue }));
-    } else if (name === 'value') {
+    if (name === 'licensePlate') setFormData(prev => ({ ...prev, [name]: value.toUpperCase().replace(/[^A-Z0-9-]/g, '').substring(0, 8) }));
+    else if (name === 'value') {
       const onlyDigits = value.replace(/\D/g, '');
-      if (!onlyDigits) {
-        setFormData(prev => ({ ...prev, value: '' }));
-        return;
-      }
-      
-      const number = parseFloat(onlyDigits) / 100;
-      const formattedValue = number.toLocaleString('pt-BR', {
-        style: 'currency',
-        currency: 'BRL',
-      });
-      
-      setFormData(prev => ({ ...prev, value: formattedValue }));
-    }
-    else {
-      setFormData(prev => ({ ...prev, [name]: value }));
-    }
+      if (!onlyDigits) { setFormData(prev => ({ ...prev, value: '' })); return; }
+      setFormData(prev => ({ ...prev, value: (parseFloat(onlyDigits) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }));
+    } else setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handlePhotoSelect = async (dataUrl: string | null) => {
@@ -99,66 +122,94 @@ export default function App() {
       setStatusMessage('Analisando imagem...');
       try {
         const info = await extractVehicleInfoFromImage(dataUrl);
-        setFormData(prev => ({
-          ...prev,
-          licensePlate: info.licensePlate ? formatPlateInput(info.licensePlate) : prev.licensePlate,
-          vehicleModel: info.vehicleModel || prev.vehicleModel,
-        }));
-        setAnalysisStatus('SUCCESS');
-        setStatusMessage('Informações extraídas!');
-      } catch (error) {
-        setAnalysisStatus('ERROR');
-        setStatusMessage((error as Error).message);
+        setFormData(prev => ({ ...prev, licensePlate: info.licensePlate || prev.licensePlate, vehicleModel: info.vehicleModel || prev.vehicleModel }));
+        setAnalysisStatus('SUCCESS'); setStatusMessage('Informações extraídas!');
+      } catch (error) { setAnalysisStatus('ERROR'); setStatusMessage('Erro na leitura.'); }
+    } else setAnalysisStatus('IDLE');
+  };
+
+  const resetForm = () => { setFormData({ ...initialFormData }); setEditingId(null); };
+
+  const handleSaveVehicle = async () => {
+    if (!formData.driverName || !formData.licensePlate || !formData.value) return alert("Preencha Motorista, Placa e Valor.");
+    setLoadingData(true);
+    let publicPhotoUrl = formData.foto_url || null;
+
+    try {
+      if (formData.photoDataUrl && formData.photoDataUrl.startsWith('data:image')) {
+        const fileBlob = dataURLtoBlob(formData.photoDataUrl);
+        const fileName = `${currentUser.id}/${Date.now()}.jpg`;
+        const { error: uploadError } = await supabase.storage.from('fotos').upload(fileName, fileBlob);
+        if (!uploadError) {
+          const { data: { publicUrl } } = supabase.storage.from('fotos').getPublicUrl(fileName);
+          publicPhotoUrl = publicUrl;
+        }
       }
-    } else {
-        setAnalysisStatus('IDLE');
-    }
+      const dadosParaBanco = {
+        motorista: formData.driverName, empresa: formData.companyName, placa: formData.licensePlate,
+        modelo: formData.vehicleModel, valor: formData.value, status: formData.paymentStatus,
+        user_id: currentUser.id, foto_url: publicPhotoUrl
+      };
+
+      if (editingId) await supabase.from('coletas').update(dadosParaBanco).eq('id', editingId);
+      else await supabase.from('coletas').insert([dadosParaBanco]);
+      
+      carregarDadosDoBanco();
+      resetForm();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error: any) { alert('Erro: ' + error.message); } 
+    finally { setLoadingData(false); }
   };
 
-  useEffect(() => {
-    if (analysisStatus === 'SUCCESS' || analysisStatus === 'ERROR') {
-      const timer = setTimeout(() => setAnalysisStatus('IDLE'), 3000);
-      return () => clearTimeout(timer);
+  // --- TRAVA DE SEGURANÇA RECOLOCADA AQUI ---
+  const removeVehicle = async (id: string, fotoUrl?: string) => {
+    // 1. Pergunta antes de fazer qualquer coisa
+    if (!confirm("Tem certeza que deseja excluir este veículo?")) {
+      return; // Se clicar em Cancelar, para tudo
     }
-  }, [analysisStatus]);
 
-
-  const resetForm = () => {
-    setFormData({ ...initialFormData, id: Date.now().toString() });
+    setLoadingData(true);
+    if (fotoUrl) {
+       try {
+         const path = fotoUrl.split('/fotos/')[1];
+         if (path) await supabase.storage.from('fotos').remove([path]);
+       } catch (e) { console.error("Erro foto", e); }
+    }
+    const { error } = await supabase.from('coletas').delete().eq('id', id);
+    if (error) alert('Erro do Banco: ' + error.message);
+    else carregarDadosDoBanco();
+    setLoadingData(false);
   };
 
-  const handleAddVehicle = () => {
-    const cleanedPlate = formData.licensePlate.replace(/[^A-Z0-9]/g, '');
-
-    if (!formData.driverName || !cleanedPlate || !formData.value) {
-      alert("Por favor, preencha todos os campos obrigatórios (Motorista, Placa e Valor).");
-      return;
-    }
-    
-    if (cleanedPlate.length < 6 || cleanedPlate.length > 7) {
-      alert("Placa inválida. A placa deve conter entre 6 e 7 letras e números.");
-      return;
+  // --- TRAVA DE SEGURANÇA RECOLOCADA AQUI TAMBÉM ---
+  const removeAllVehicles = async () => {
+    // 1. Pergunta com aviso forte
+    if (!confirm("ATENÇÃO: Isso apagará TODOS os veículos da lista. Deseja continuar?")) {
+      return; // Para tudo se cancelar
     }
 
-    setVehicleList(prev => [...prev, formData]);
-    setIsListExpanded(false);
-    resetForm();
+    setLoadingData(true);
+    const { data: items } = await supabase.from('coletas').select('foto_url').eq('user_id', currentUser.id);
+    if (items) {
+      const fotos = items.filter(i => i.foto_url).map(i => i.foto_url!.split('/fotos/')[1]).filter(p => p);
+      if (fotos.length) await supabase.storage.from('fotos').remove(fotos);
+    }
+    const { error } = await supabase.from('coletas').delete().eq('user_id', currentUser.id);
+    if (error) alert('Erro do Banco: ' + error.message);
+    else setVehicleList([]);
+    setLoadingData(false);
+  };
+
+  const startEditing = (vehicle: VehicleData) => {
+    setEditingId(vehicle.id);
+    setFormData({ ...vehicle });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const removeVehicle = (id: string) => {
-    setVehicleList(prev => prev.filter(v => v.id !== id));
-  };
-
-  const generateAndSavePDF = () => {
-    if (vehicleList.length === 0) {
-      alert("Adicione pelo menos um veículo à lista.");
-      return;
-    }
-
+  // Lógica do PDF em Tabela (igual ao ANTES.pdf)
+  const generateAndSavePDF = async () => {
+    if (vehicleList.length === 0) return alert("Lista vazia.");
     setPdfStatus('GENERATING');
-    setStatusMessage('Gerando planilha PDF...');
-
     try {
       const doc = new jsPDF();
       
@@ -217,6 +268,12 @@ export default function App() {
         if (yPos + rowHeight > pageHeight - 20) {
           doc.addPage();
           yPos = 20;
+          doc.setFillColor(240, 240, 240);
+          doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
+          doc.setFont("helvetica", "bold");
+          Object.values(cols).forEach(col => doc.text(col.title, col.x + 2, yPos));
+          yPos += 2;
+          doc.setFont("helvetica", "normal");
         }
 
         const currentY = yPos + (rowHeight / 2);
@@ -224,7 +281,7 @@ export default function App() {
         if (vehicle.photoDataUrl) {
           try {
             doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 2, currentY - (photoSize/2), photoSize, photoSize);
-          } catch(e) { console.error("Error adding image to PDF", e); }
+          } catch(e) { console.error("PDF Image Error", e); }
         }
 
         doc.setFontSize(9);
@@ -272,234 +329,83 @@ export default function App() {
       }
       
       doc.save(`Relatorio_Frota_${Date.now()}.pdf`);
-
-      setPdfStatus('SUCCESS');
-      setStatusMessage('Planilha salva com sucesso!');
-      
-      setTimeout(() => {
-        setPdfStatus('IDLE');
-        setVehicleList([]);
-      }, 3000);
-
-    } catch (error) {
-      console.error("PDF Error", error);
-      setPdfStatus('ERROR');
-      setStatusMessage('Erro ao gerar documento.');
-    }
+      setPdfStatus('SUCCESS'); setTimeout(() => setPdfStatus('IDLE'), 3000);
+    } catch (e) { setPdfStatus('ERROR'); }
   };
-  
-  const cleanedPlateLength = formData.licensePlate.replace(/[^A-Z0-9]/g, '').length;
-  const isFormValid = formData.driverName && cleanedPlateLength >= 6 && cleanedPlateLength <= 7 && formData.value && analysisStatus !== 'ANALYZING';
 
-  const renderVehicleCard = (vehicle: VehicleData, isLast: boolean) => (
-      <div key={vehicle.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex items-start justify-between">
-          <div className="flex items-center gap-3">
-              {vehicle.photoDataUrl ? (
-                  <img src={vehicle.photoDataUrl} alt="Veículo" className="w-10 h-10 rounded-full object-cover bg-gray-100" />
-              ) : (
-                  <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400">
-                      <CameraIcon size={20} />
-                  </div>
-              )}
-              <div>
-                  <p className="font-medium text-gray-900">{vehicle.driverName}</p>
-                  <p className="text-xs text-gray-500">{vehicle.licensePlate.toUpperCase()} • {vehicle.paymentStatus}</p>
-              </div>
-          </div>
-          <button
-              onClick={(e) => {
-                  if (!isLast || isListExpanded) e.stopPropagation();
-                  removeVehicle(vehicle.id)
-              }}
-              className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-          >
-              <Trash2 size={18} />
-          </button>
-      </div>
-  );
-
-  if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
-  }
-  
-  const isAnalyzing = analysisStatus === 'ANALYZING';
+  if (!currentUser) return <LoginScreen onLogin={(user) => { setCurrentUser(user); carregarDadosDoBanco(); }} />;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <UserIcon className="text-blue-600" size={20}/>
-            <span className="font-semibold text-gray-800">{currentUser.name}</span>
-          </div>
-          <button onClick={handleLogout} className="text-sm font-medium text-gray-500 hover:text-blue-600 flex items-center gap-1.5">
-            Sair
-            <LogOut size={16} />
-          </button>
-        </div>
-        <div className="max-w-md mx-auto px-4 pb-3 flex items-center justify-center gap-2 border-t border-gray-100">
-          <button 
-              onClick={() => setSelectedRoute('MANAUS')}
-              className={`px-6 py-1.5 text-sm font-semibold rounded-full transition-all duration-200 ease-in-out transform active:scale-95 ${
-                  selectedRoute === 'MANAUS' 
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-          > MANAUS </button>
-          <button
-              onClick={() => setSelectedRoute('SANTARÉM')}
-              className={`px-6 py-1.5 text-sm font-semibold rounded-full transition-all duration-200 ease-in-out transform active:scale-95 ${
-                  selectedRoute === 'SANTARÉM' 
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-          > SANTARÉM </button>
-        </div>
+      <header className="bg-white border-b sticky top-0 z-20 shadow-sm p-4 flex justify-between items-center">
+        <div className="flex gap-2 items-center"><UserIcon className="text-blue-600"/> <b>{currentUser.name}</b></div>
+        <button onClick={handleLogout} className="text-gray-500"><LogOut size={20}/></button>
       </header>
+      
+      <div className="p-4 flex justify-center gap-2 bg-white border-b">
+         <button onClick={() => setSelectedRoute('MANAUS')} className={`px-4 py-1 rounded-full text-sm font-bold ${selectedRoute === 'MANAUS' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>MANAUS</button>
+         <button onClick={() => setSelectedRoute('SANTARÉM')} className={`px-4 py-1 rounded-full text-sm font-bold ${selectedRoute === 'SANTARÉM' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>SANTARÉM</button>
+      </div>
 
-      <main className="max-w-md mx-auto px-4 py-6">
-        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 relative">
-          <div className="absolute top-0 right-0 p-4">
-             <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Novo Cadastro</span>
-          </div>
-
-          <PhotoUploader 
-            key={formData.id}
-            photoDataUrl={formData.photoDataUrl} 
-            onPhotoSelect={handlePhotoSelect} 
-            isAnalyzing={isAnalyzing}
-          />
-
-          {analysisStatus !== 'IDLE' && (
-             <div className={`text-center text-sm p-2 mb-4 rounded-md ${analysisStatus === 'ANALYZING' ? 'bg-blue-50 text-blue-700' : analysisStatus === 'SUCCESS' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                {statusMessage}
-             </div>
-          )}
-
-          <Input
-            label="Nome do Motorista"
-            name="driverName"
-            value={formData.driverName}
-            onChange={handleInputChange}
-            placeholder="Ex: João da Silva"
-            icon={<UserIcon size={18} />}
-          />
-          <Input
-            label="Nome da Empresa (Opcional)"
-            name="companyName"
-            value={formData.companyName}
-            onChange={handleInputChange}
-            placeholder="Ex: Transportes Brasil"
-            icon={<Building2 size={18} />}
-          />
-
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Placa"
-              name="licensePlate"
-              value={formData.licensePlate}
-              onChange={handleInputChange}
-              placeholder="ABC-1234"
-              icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
-              className="uppercase"
-              maxLength={8}
-              disabled={isAnalyzing}
-            />
-             <Input
-              label="Valor (R$)"
-              name="value"
-              type="text"
-              inputMode="decimal"
-              value={formData.value}
-              onChange={handleInputChange}
-              placeholder="R$ 0,00"
-              icon={<DollarSign size={18} />}
-            />
-          </div>
-
-          <Input
-            label="Modelo do Veículo"
-            name="vehicleModel"
-            value={formData.vehicleModel}
-            onChange={handleInputChange}
-            placeholder="Selecione ou digite um modelo"
-            icon={isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Car size={18} />}
-            list="vehicle-models-list"
-            disabled={isAnalyzing}
-          />
-          <datalist id="vehicle-models-list">
-            {vehicleModels.map((model) => (<option key={model} value={model} />))}
-          </datalist>
+      <main className="max-w-md mx-auto p-4">
+        <div className={`bg-white rounded-xl shadow-sm p-6 border ${editingId ? 'border-yellow-400' : 'border-gray-100'} relative`}>
+          <div className="absolute top-2 right-2 text-xs font-bold text-gray-400">{editingId ? 'EDITANDO' : 'NOVO'}</div>
+          <PhotoUploader photoDataUrl={formData.photoDataUrl} onPhotoSelect={handlePhotoSelect} isAnalyzing={analysisStatus === 'ANALYZING'} />
           
-          <div className="mt-4 mb-2">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Status do Pagamento</label>
-            <div className="flex gap-3">
-              <button 
-                type="button"
-                onClick={() => setFormData(prev => ({ ...prev, paymentStatus: 'Pago' }))}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${formData.paymentStatus === 'Pago' ? 'bg-green-500 text-white shadow' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-              >Pago</button>
-              <button 
-                type="button"
-                onClick={() => setFormData(prev => ({ ...prev, paymentStatus: 'Pendente' }))}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${formData.paymentStatus === 'Pendente' ? 'bg-red-500 text-white shadow' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-              >Pendente</button>
-            </div>
+          <Input label="Motorista" name="driverName" value={formData.driverName} onChange={handleInputChange} placeholder="Nome" icon={<UserIcon size={18} />} />
+          <Input label="Empresa" name="companyName" value={formData.companyName} onChange={handleInputChange} placeholder="Empresa (Opc)" icon={<Building2 size={18} />} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Placa" name="licensePlate" value={formData.licensePlate} onChange={handleInputChange} placeholder="ABC-1234" icon={<FileText size={18} />} className="uppercase" maxLength={8} />
+            <Input label="Valor" name="value" value={formData.value} onChange={handleInputChange} placeholder="R$ 0,00" icon={<DollarSign size={18} />} />
+          </div>
+          <Input label="Modelo" name="vehicleModel" value={formData.vehicleModel} onChange={handleInputChange} placeholder="Modelo" icon={<Car size={18} />} list="models" />
+          <datalist id="models">{vehicleModels.map(m => <option key={m} value={m} />)}</datalist>
+
+          <div className="mt-4 flex gap-2">
+             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pago'}))} className={`flex-1 py-2 rounded ${formData.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-gray-200'}`}>Pago</button>
+             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pendente'}))} className={`flex-1 py-2 rounded ${formData.paymentStatus === 'Pendente' ? 'bg-red-500 text-white' : 'bg-gray-200'}`}>Pendente</button>
           </div>
 
-
-          <button
-            onClick={handleAddVehicle}
-            disabled={!isFormValid || pdfStatus !== 'IDLE'}
-            className={`w-full mt-6 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-semibold text-white transition-all
-              ${isFormValid && pdfStatus === 'IDLE' ? 'bg-gray-900 hover:bg-black shadow-md' : 'bg-gray-300 cursor-not-allowed'}`}
-          >
-            <Plus size={20} />
-            Adicionar à Lista
-          </button>
+          <div className="flex gap-2 mt-6">
+            {editingId && <button onClick={resetForm} className="px-4 bg-gray-200 rounded text-gray-700">Cancelar</button>}
+            <button onClick={handleSaveVehicle} disabled={loadingData} className={`flex-1 py-3 rounded text-white font-bold ${editingId ? 'bg-yellow-500' : 'bg-gray-900'}`}>
+              {loadingData ? <Loader2 className="animate-spin mx-auto"/> : (editingId ? 'Salvar Alteração' : 'Adicionar')}
+            </button>
+          </div>
         </div>
 
         {vehicleList.length > 0 && (
           <div className="mt-6">
-              <h2 className="text-sm font-semibold text-gray-500 mb-3 flex items-center gap-2"><List size={16} /> Veículos Adicionados ({vehicleList.length})</h2>
-              {!isListExpanded ? (
-                  <div onClick={() => vehicleList.length > 1 && setIsListExpanded(true)} className={`${vehicleList.length > 1 ? 'cursor-pointer' : ''} space-y-2`}>
-                      {vehicleList.length > 1 && (<p className="text-xs font-semibold text-center text-blue-600">+{vehicleList.length - 1} registro(s) anterior(es)</p>)}
-                      {renderVehicleCard(vehicleList[vehicleList.length - 1], true)}
-                  </div>
-              ) : (
-                  <div className="space-y-3">
-                      {[...vehicleList].reverse().map((vehicle) => renderVehicleCard(vehicle, false))}
-                      {vehicleList.length > 1 && (<button onClick={() => setIsListExpanded(false)} className="w-full text-center text-sm text-blue-600 font-semibold py-2 rounded-lg hover:bg-blue-50 transition-colors mt-2">Mostrar apenas o último</button>)}
-                  </div>
-              )}
-          </div>
-        )}
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="text-sm font-bold text-gray-500 flex items-center gap-2"><List size={16} /> Salvos ({vehicleList.length})</h2>
+                <button onClick={removeAllVehicles} className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full flex items-center gap-1 hover:bg-red-200">
+                  <Trash2 size={12} /> Limpar Lista
+                </button>
+              </div>
 
-        {pdfStatus === 'SUCCESS' && (
-          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3 text-green-700 animate-fade-in">
-            <CheckCircle size={24} /><p className="font-semibold">Documento Salvo!</p>
+              <div className="space-y-3">
+                  {vehicleList.map((vehicle) => (
+                    <div key={vehicle.id} className="bg-white p-3 rounded-lg border shadow-sm flex justify-between items-center">
+                       <div className="flex items-center gap-3">
+                          {vehicle.photoDataUrl ? <img src={vehicle.photoDataUrl} className="w-10 h-10 rounded-full object-cover bg-gray-100"/> : <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center"><CameraIcon size={20} className="text-gray-400"/></div>}
+                          <div><p className="font-bold text-sm">{vehicle.driverName}</p><p className="text-xs text-gray-500">{vehicle.licensePlate} • {vehicle.paymentStatus}</p></div>
+                       </div>
+                       <div className="flex gap-1">
+                          <button onClick={() => startEditing(vehicle)} className="p-2 text-blue-500 bg-blue-50 rounded"><Edit size={16}/></button>
+                          <button onClick={() => removeVehicle(vehicle.id, vehicle.foto_url)} className="p-2 text-red-500 bg-red-50 rounded"><Trash2 size={16}/></button>
+                       </div>
+                    </div>
+                  ))}
+              </div>
           </div>
-        )}
-         {pdfStatus === 'ERROR' && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700"><p className="font-semibold">Erro ao salvar.</p></div>
         )}
       </main>
 
-      {vehicleList.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 pb-safe z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-          <div className="max-w-md mx-auto">
-            <button
-              onClick={generateAndSavePDF}
-              disabled={pdfStatus !== 'IDLE' && pdfStatus !== 'SUCCESS'}
-              className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl font-semibold text-white shadow-lg transition-all transform active:scale-95
-                ${pdfStatus === 'IDLE' || pdfStatus === 'SUCCESS' ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' : 'bg-gray-400 cursor-not-allowed'}`}
-            >
-              {pdfStatus === 'GENERATING' ? (<><Loader2 className="animate-spin" size={20} />{statusMessage}</>) : (<><UploadCloud size={20} />Gerar Planilha PDF</>)}
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="fixed bottom-0 w-full bg-white border-t p-4 z-30">
+        <button onClick={generateAndSavePDF} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex justify-center gap-2">
+           {pdfStatus === 'GENERATING' ? <Loader2 className="animate-spin"/> : <UploadCloud/>} Gerar PDF
+        </button>
+      </div>
     </div>
   );
 }

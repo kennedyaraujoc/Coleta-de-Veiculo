@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { jsPDF } from 'jspdf';
-import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, Loader2, List, Camera as CameraIcon, LogOut, Building2, Edit, Trash2 } from 'lucide-react';
+import { Car, User as UserIcon, FileText, DollarSign, UploadCloud, Loader2, List, Camera as CameraIcon, LogOut, Building2, Edit, Trash2, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Input } from './components/Input';
 import { PhotoUploader } from './components/PhotoUploader';
 import { LoginScreen } from './components/LoginScreen';
@@ -50,6 +50,10 @@ export default function App() {
   const [selectedRoute, setSelectedRoute] = useState<'MANAUS' | 'SANTARÉM'>('MANAUS');
   const [loadingData, setLoadingData] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  
+  // NOVOS ESTADOS PARA CONTROLAR SE A LISTA TÁ ABERTA OU FECHADA
+  const [showPendentes, setShowPendentes] = useState(true);
+  const [showPagos, setShowPagos] = useState(true);
   
   const initialFormData: VehicleData = {
     id: '', driverName: '', companyName: '', licensePlate: '', vehicleModel: '', value: '', photoDataUrl: null, paymentStatus: 'Pendente',
@@ -161,13 +165,8 @@ export default function App() {
     finally { setLoadingData(false); }
   };
 
-  // --- TRAVA DE SEGURANÇA RECOLOCADA AQUI ---
   const removeVehicle = async (id: string, fotoUrl?: string) => {
-    // 1. Pergunta antes de fazer qualquer coisa
-    if (!confirm("Tem certeza que deseja excluir este veículo?")) {
-      return; // Se clicar em Cancelar, para tudo
-    }
-
+    if (!confirm("Tem certeza que deseja excluir este veículo?")) return;
     setLoadingData(true);
     if (fotoUrl) {
        try {
@@ -181,13 +180,8 @@ export default function App() {
     setLoadingData(false);
   };
 
-  // --- TRAVA DE SEGURANÇA RECOLOCADA AQUI TAMBÉM ---
   const removeAllVehicles = async () => {
-    // 1. Pergunta com aviso forte
-    if (!confirm("ATENÇÃO: Isso apagará TODOS os veículos da lista. Deseja continuar?")) {
-      return; // Para tudo se cancelar
-    }
-
+    if (!confirm("ATENÇÃO: Isso apagará TODOS os veículos. Deseja continuar?")) return;
     setLoadingData(true);
     const { data: items } = await supabase.from('coletas').select('foto_url').eq('user_id', currentUser.id);
     if (items) {
@@ -206,132 +200,95 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Lógica do PDF em Tabela (igual ao ANTES.pdf)
   const generateAndSavePDF = async () => {
     if (vehicleList.length === 0) return alert("Lista vazia.");
     setPdfStatus('GENERATING');
     try {
       const doc = new jsPDF();
-      
-      const pdfTitle = selectedRoute === 'MANAUS' 
-        ? 'Relatório de Veículos de Manaus à Santarém'
-        : 'Relatório de Veículos de Santarém à Manaus';
+      const pdfTitle = selectedRoute === 'MANAUS' ? 'Relatório de Veículos de Manaus à Santarém' : 'Relatório de Veículos de Santarém à Manaus';
 
-      doc.setFontSize(18);
-      doc.text(pdfTitle, 14, 20);
-      
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(50);
-      doc.text(`Funcionário: ${currentUser?.name}`, 14, 26);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 32);
+      doc.setFontSize(18); doc.text(pdfTitle, 14, 20);
+      doc.setFontSize(12); doc.setFont("helvetica", "normal"); doc.setTextColor(50); doc.text(`Funcionário: ${currentUser?.name}`, 14, 26);
+      doc.setFontSize(10); doc.setTextColor(100); doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 32);
 
       let yPos = 40;
       const rowHeight = 22;
       const pageHeight = doc.internal.pageSize.height;
       const photoSize = 16;
-
-      const cols = {
-        photo:    { x: 10,  w: 20, title: 'Foto' },
-        driver:   { x: 30,  w: 45, title: 'Motorista / Empresa' },
-        plate:    { x: 75,  w: 25, title: 'Placa' },
-        model:    { x: 100, w: 35, title: 'Modelo' },
-        value:    { x: 135, w: 20, title: 'Valor' },
-        status:   { x: 155, w: 20, title: 'Status' },
-        sign:     { x: 175, w: 25, title: 'Assinatura' }
-      };
-      
+      const cols = { photo: { x: 10, w: 20, title: 'Foto' }, driver: { x: 30, w: 45, title: 'Motorista / Empresa' }, plate: { x: 75, w: 25, title: 'Placa' }, model: { x: 100, w: 35, title: 'Modelo' }, value: { x: 135, w: 20, title: 'Valor' }, status: { x: 155, w: 20, title: 'Status' }, sign: { x: 175, w: 25, title: 'Assinatura' } };
       const tableWidth = Object.values(cols).reduce((sum, col) => sum + col.w, 0);
       const tableEndX = cols.photo.x + tableWidth;
 
-      doc.setFillColor(240, 240, 240);
-      doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
-      
-      doc.setFontSize(9);
-      doc.setTextColor(0);
-      doc.setFont("helvetica", "bold");
-      
-      Object.values(cols).forEach(col => {
-        doc.text(col.title, col.x + 2, yPos);
-      });
-      
+      doc.setFillColor(240, 240, 240); doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
+      doc.setFontSize(9); doc.setTextColor(0); doc.setFont("helvetica", "bold");
+      Object.values(cols).forEach(col => doc.text(col.title, col.x + 2, yPos));
       yPos += 2;
-      doc.setLineWidth(0.5);
-      doc.line(cols.photo.x, yPos, tableEndX, yPos);
-      
+      doc.setLineWidth(0.5); doc.line(cols.photo.x, yPos, tableEndX, yPos);
       doc.setFont("helvetica", "normal");
       
       for (const vehicle of vehicleList) {
         if (yPos + rowHeight > pageHeight - 20) {
-          doc.addPage();
-          yPos = 20;
-          doc.setFillColor(240, 240, 240);
-          doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
-          doc.setFont("helvetica", "bold");
-          Object.values(cols).forEach(col => doc.text(col.title, col.x + 2, yPos));
-          yPos += 2;
-          doc.setFont("helvetica", "normal");
+          doc.addPage(); yPos = 20;
+          doc.setFillColor(240, 240, 240); doc.rect(cols.photo.x, yPos - 5, tableWidth, 7, 'F');
+          doc.setFont("helvetica", "bold"); Object.values(cols).forEach(col => doc.text(col.title, col.x + 2, yPos));
+          yPos += 2; doc.setFont("helvetica", "normal");
         }
-
         const currentY = yPos + (rowHeight / 2);
-
-        if (vehicle.photoDataUrl) {
-          try {
-            doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 2, currentY - (photoSize/2), photoSize, photoSize);
-          } catch(e) { console.error("PDF Image Error", e); }
-        }
-
-        doc.setFontSize(9);
-        doc.text(vehicle.driverName, cols.driver.x + 2, currentY - 1, { maxWidth: cols.driver.w - 4 });
-        if (vehicle.companyName) {
-            doc.setFontSize(7);
-            doc.setTextColor(100);
-            doc.text(vehicle.companyName, cols.driver.x + 2, currentY + 4, { maxWidth: cols.driver.w - 4 });
-            doc.setTextColor(0);
-        }
-
-        doc.setFontSize(9);
-        doc.text(vehicle.licensePlate, cols.plate.x + 2, currentY + 2);
+        if (vehicle.photoDataUrl) { try { doc.addImage(vehicle.photoDataUrl, 'JPEG', cols.photo.x + 2, currentY - (photoSize/2), photoSize, photoSize); } catch(e) { console.error("PDF Image Error", e); } }
+        doc.setFontSize(9); doc.text(vehicle.driverName, cols.driver.x + 2, currentY - 1, { maxWidth: cols.driver.w - 4 });
+        if (vehicle.companyName) { doc.setFontSize(7); doc.setTextColor(100); doc.text(vehicle.companyName, cols.driver.x + 2, currentY + 4, { maxWidth: cols.driver.w - 4 }); doc.setTextColor(0); }
+        doc.setFontSize(9); doc.text(vehicle.licensePlate, cols.plate.x + 2, currentY + 2);
         doc.text(vehicle.vehicleModel, cols.model.x + 2, currentY + 2, { maxWidth: cols.model.w - 4 });
         doc.text(vehicle.value, cols.value.x + 2, currentY + 2);
         
         if (vehicle.paymentStatus === 'Pago') {
-            doc.setFillColor(34, 197, 94); // green
-            doc.setTextColor(34, 197, 94);
-            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F');
-            doc.text("Pago", cols.status.x + 7, currentY + 2);
+            doc.setFillColor(34, 197, 94); doc.setTextColor(34, 197, 94);
+            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F'); doc.text("Pago", cols.status.x + 7, currentY + 2);
         } else {
-            doc.setFillColor(239, 68, 68); // red
-            doc.setTextColor(239, 68, 68);
-            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F');
-            doc.text("Pendente", cols.status.x + 7, currentY + 2);
+            doc.setFillColor(239, 68, 68); doc.setTextColor(239, 68, 68);
+            doc.circle(cols.status.x + 4, currentY + 1.5, 1.5, 'F'); doc.text("Pendente", cols.status.x + 7, currentY + 2);
         }
         doc.setTextColor(0);
-
-        doc.setLineWidth(0.1);
-        doc.line(cols.sign.x + 2, currentY + 4, cols.sign.x + cols.sign.w - 2, currentY + 4);
-
-        yPos += rowHeight;
-        doc.setDrawColor(200);
-        doc.line(cols.photo.x, yPos, tableEndX, yPos);
+        doc.setLineWidth(0.1); doc.line(cols.sign.x + 2, currentY + 4, cols.sign.x + cols.sign.w - 2, currentY + 4);
+        yPos += rowHeight; doc.setDrawColor(200); doc.line(cols.photo.x, yPos, tableEndX, yPos);
       }
-      
       const pageCount = (doc as any).internal.pages.length;
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text(`Gerado por: ${currentUser?.name}`, 14, pageHeight - 10);
-        doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 35, pageHeight - 10);
-      }
+      for (let i = 1; i <= pageCount; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text(`Gerado por: ${currentUser?.name}`, 14, pageHeight - 10); doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 35, pageHeight - 10); }
       
       doc.save(`Relatorio_Frota_${Date.now()}.pdf`);
       setPdfStatus('SUCCESS'); setTimeout(() => setPdfStatus('IDLE'), 3000);
     } catch (e) { setPdfStatus('ERROR'); }
   };
+
+  const pendentes = vehicleList.filter(v => v.paymentStatus === 'Pendente');
+  const pagos = vehicleList.filter(v => v.paymentStatus === 'Pago');
+
+  const VehicleCard = ({ vehicle }: { vehicle: VehicleData }) => {
+     const isPaid = vehicle.paymentStatus === 'Pago';
+     return (
+        <div className={`p-3 rounded-lg border shadow-sm flex justify-between items-center transition-all ${isPaid ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+            <div className="flex items-center gap-3">
+                {vehicle.photoDataUrl ? <img src={vehicle.photoDataUrl} className="w-10 h-10 rounded-full object-cover bg-gray-100 border border-gray-200"/> : <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center"><CameraIcon size={20} className="text-gray-400"/></div>}
+                <div>
+                    <p className="font-bold text-sm text-gray-800">{vehicle.driverName}</p>
+                    <div className="flex items-center gap-1">
+                        <p className="text-xs text-gray-500 font-mono">{vehicle.licensePlate}</p>
+                        <span className="text-gray-300">•</span>
+                        {isPaid ? (
+                           <span className="text-xs font-bold text-green-700 flex items-center gap-1"><CheckCircle size={10}/> Pago</span>
+                        ) : (
+                           <span className="text-xs font-bold text-red-600 flex items-center gap-1"><AlertCircle size={10}/> Pendente</span>
+                        )}
+                    </div>
+                </div>
+            </div>
+            <div className="flex gap-1">
+                <button onClick={() => startEditing(vehicle)} className="p-2 text-blue-600 bg-white border border-blue-100 hover:bg-blue-50 rounded-lg"><Edit size={16}/></button>
+                <button onClick={() => removeVehicle(vehicle.id, vehicle.foto_url)} className="p-2 text-red-600 bg-white border border-red-100 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
+            </div>
+        </div>
+     );
+  }
 
   if (!currentUser) return <LoginScreen onLogin={(user) => { setCurrentUser(user); carregarDadosDoBanco(); }} />;
 
@@ -339,20 +296,24 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 pb-32">
       <header className="bg-white border-b sticky top-0 z-20 shadow-sm p-4 flex justify-between items-center">
         <div className="flex gap-2 items-center"><UserIcon className="text-blue-600"/> <b>{currentUser.name}</b></div>
-        <button onClick={handleLogout} className="text-gray-500"><LogOut size={20}/></button>
+        <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 transition-colors"><LogOut size={20}/></button>
       </header>
       
       <div className="p-4 flex justify-center gap-2 bg-white border-b">
-         <button onClick={() => setSelectedRoute('MANAUS')} className={`px-4 py-1 rounded-full text-sm font-bold ${selectedRoute === 'MANAUS' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>MANAUS</button>
-         <button onClick={() => setSelectedRoute('SANTARÉM')} className={`px-4 py-1 rounded-full text-sm font-bold ${selectedRoute === 'SANTARÉM' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>SANTARÉM</button>
+         <button onClick={() => setSelectedRoute('MANAUS')} className={`px-4 py-1 rounded-full text-sm font-bold transition-all ${selectedRoute === 'MANAUS' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>MANAUS</button>
+         <button onClick={() => setSelectedRoute('SANTARÉM')} className={`px-4 py-1 rounded-full text-sm font-bold transition-all ${selectedRoute === 'SANTARÉM' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>SANTARÉM</button>
       </div>
 
-      <main className="max-w-md mx-auto p-4">
-        <div className={`bg-white rounded-xl shadow-sm p-6 border ${editingId ? 'border-yellow-400' : 'border-gray-100'} relative`}>
-          <div className="absolute top-2 right-2 text-xs font-bold text-gray-400">{editingId ? 'EDITANDO' : 'NOVO'}</div>
+      <main className="max-w-md mx-auto p-4 space-y-6">
+        {/* FORMULÁRIO */}
+        <div className={`bg-white rounded-xl shadow-sm p-6 border transition-all ${editingId ? 'border-yellow-400 ring-2 ring-yellow-100' : 'border-gray-100'} relative`}>
+          <div className="absolute top-3 right-3">
+              {editingId ? <span className="text-[10px] font-black text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full uppercase tracking-wider">Editando</span> 
+                         : <span className="text-[10px] font-black text-gray-400 bg-gray-100 px-2 py-1 rounded-full uppercase tracking-wider">Novo</span>}
+          </div>
           <PhotoUploader photoDataUrl={formData.photoDataUrl} onPhotoSelect={handlePhotoSelect} isAnalyzing={analysisStatus === 'ANALYZING'} />
           
-          <Input label="Motorista" name="driverName" value={formData.driverName} onChange={handleInputChange} placeholder="Nome" icon={<UserIcon size={18} />} />
+          <Input label="Motorista" name="driverName" value={formData.driverName} onChange={handleInputChange} placeholder="Nome Completo" icon={<UserIcon size={18} />} />
           <Input label="Empresa" name="companyName" value={formData.companyName} onChange={handleInputChange} placeholder="Empresa (Opc)" icon={<Building2 size={18} />} />
           <div className="grid grid-cols-2 gap-4">
             <Input label="Placa" name="licensePlate" value={formData.licensePlate} onChange={handleInputChange} placeholder="ABC-1234" icon={<FileText size={18} />} className="uppercase" maxLength={8} />
@@ -362,48 +323,75 @@ export default function App() {
           <datalist id="models">{vehicleModels.map(m => <option key={m} value={m} />)}</datalist>
 
           <div className="mt-4 flex gap-2">
-             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pago'}))} className={`flex-1 py-2 rounded ${formData.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-gray-200'}`}>Pago</button>
-             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pendente'}))} className={`flex-1 py-2 rounded ${formData.paymentStatus === 'Pendente' ? 'bg-red-500 text-white' : 'bg-gray-200'}`}>Pendente</button>
+             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pago'}))} className={`flex-1 py-3 rounded-lg font-bold transition-all flex justify-center items-center gap-2 ${formData.paymentStatus === 'Pago' ? 'bg-green-100 text-green-700 border-2 border-green-500' : 'bg-gray-100 text-gray-500 border-2 border-transparent'}`}><CheckCircle size={18}/> Pago</button>
+             <button onClick={() => setFormData(p => ({...p, paymentStatus: 'Pendente'}))} className={`flex-1 py-3 rounded-lg font-bold transition-all flex justify-center items-center gap-2 ${formData.paymentStatus === 'Pendente' ? 'bg-red-100 text-red-700 border-2 border-red-500' : 'bg-gray-100 text-gray-500 border-2 border-transparent'}`}><AlertCircle size={18}/> Pendente</button>
           </div>
 
           <div className="flex gap-2 mt-6">
-            {editingId && <button onClick={resetForm} className="px-4 bg-gray-200 rounded text-gray-700">Cancelar</button>}
-            <button onClick={handleSaveVehicle} disabled={loadingData} className={`flex-1 py-3 rounded text-white font-bold ${editingId ? 'bg-yellow-500' : 'bg-gray-900'}`}>
-              {loadingData ? <Loader2 className="animate-spin mx-auto"/> : (editingId ? 'Salvar Alteração' : 'Adicionar')}
+            {editingId && <button onClick={resetForm} className="px-4 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 font-medium">Cancelar</button>}
+            <button onClick={handleSaveVehicle} disabled={loadingData} className={`flex-1 py-3 rounded-lg text-white font-bold shadow-md transition-all active:scale-95 ${editingId ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-gray-900 hover:bg-black'}`}>
+              {loadingData ? <Loader2 className="animate-spin mx-auto"/> : (editingId ? 'Salvar Alterações' : 'Adicionar à Lista')}
             </button>
           </div>
         </div>
 
+        {/* LISTAS SEPARADAS E COLAPSÁVEIS */}
         {vehicleList.length > 0 && (
-          <div className="mt-6">
-              <div className="flex justify-between items-center mb-3">
-                <h2 className="text-sm font-bold text-gray-500 flex items-center gap-2"><List size={16} /> Salvos ({vehicleList.length})</h2>
-                <button onClick={removeAllVehicles} className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full flex items-center gap-1 hover:bg-red-200">
-                  <Trash2 size={12} /> Limpar Lista
+          <div className="space-y-6">
+              <div className="flex justify-end">
+                <button onClick={removeAllVehicles} className="text-xs bg-red-50 text-red-600 border border-red-200 px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-red-100 font-medium transition-colors">
+                  <Trash2 size={12} /> Limpar Tudo
                 </button>
               </div>
 
-              <div className="space-y-3">
-                  {vehicleList.map((vehicle) => (
-                    <div key={vehicle.id} className="bg-white p-3 rounded-lg border shadow-sm flex justify-between items-center">
-                       <div className="flex items-center gap-3">
-                          {vehicle.photoDataUrl ? <img src={vehicle.photoDataUrl} className="w-10 h-10 rounded-full object-cover bg-gray-100"/> : <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center"><CameraIcon size={20} className="text-gray-400"/></div>}
-                          <div><p className="font-bold text-sm">{vehicle.driverName}</p><p className="text-xs text-gray-500">{vehicle.licensePlate} • {vehicle.paymentStatus}</p></div>
-                       </div>
-                       <div className="flex gap-1">
-                          <button onClick={() => startEditing(vehicle)} className="p-2 text-blue-500 bg-blue-50 rounded"><Edit size={16}/></button>
-                          <button onClick={() => removeVehicle(vehicle.id, vehicle.foto_url)} className="p-2 text-red-500 bg-red-50 rounded"><Trash2 size={16}/></button>
-                       </div>
-                    </div>
-                  ))}
-              </div>
+              {/* GRUPO PENDENTES */}
+              {pendentes.length > 0 && (
+                  <div className="bg-red-50/50 rounded-xl border border-red-100 overflow-hidden">
+                      <button 
+                        onClick={() => setShowPendentes(!showPendentes)}
+                        className="w-full flex items-center justify-between p-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs uppercase tracking-wider transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                           <AlertCircle size={14}/> Pendentes ({pendentes.length})
+                        </div>
+                        {showPendentes ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                      </button>
+                      
+                      {showPendentes && (
+                        <div className="p-3 space-y-3">
+                            {pendentes.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}
+                        </div>
+                      )}
+                  </div>
+              )}
+
+              {/* GRUPO PAGOS */}
+              {pagos.length > 0 && (
+                  <div className="bg-green-50/50 rounded-xl border border-green-100 overflow-hidden">
+                      <button 
+                        onClick={() => setShowPagos(!showPagos)}
+                        className="w-full flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 text-green-700 font-bold text-xs uppercase tracking-wider transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                           <CheckCircle size={14}/> Pagos ({pagos.length})
+                        </div>
+                        {showPagos ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                      </button>
+                      
+                      {showPagos && (
+                        <div className="p-3 space-y-3">
+                            {pagos.map((vehicle) => <VehicleCard key={vehicle.id} vehicle={vehicle} />)}
+                        </div>
+                      )}
+                  </div>
+              )}
           </div>
         )}
       </main>
 
-      <div className="fixed bottom-0 w-full bg-white border-t p-4 z-30">
-        <button onClick={generateAndSavePDF} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex justify-center gap-2">
-           {pdfStatus === 'GENERATING' ? <Loader2 className="animate-spin"/> : <UploadCloud/>} Gerar PDF
+      <div className="fixed bottom-0 w-full bg-white border-t p-4 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+        <button onClick={generateAndSavePDF} className="max-w-md mx-auto w-full py-3.5 bg-blue-600 text-white rounded-xl font-bold flex justify-center items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200">
+           {pdfStatus === 'GENERATING' ? <Loader2 className="animate-spin"/> : <UploadCloud size={20}/>} Gerar PDF
         </button>
       </div>
     </div>
